@@ -1,0 +1,250 @@
+"""Database connection and models using raw asyncpg."""
+
+import asyncpg
+import logging
+from datetime import datetime
+
+from app.config import config
+
+logger = logging.getLogger(__name__)
+
+pool: asyncpg.Pool | None = None
+
+
+async def init_db():
+    """Create connection pool and initialize schema."""
+    global pool
+    pool = await asyncpg.create_pool(config.database_url, min_size=2, max_size=10)
+    async with pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    logger.info("Database initialized")
+
+
+async def close_db():
+    """Close the connection pool."""
+    global pool
+    if pool:
+        await pool.close()
+        pool = None
+
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS users (
+    telegram_id   BIGINT PRIMARY KEY,
+    username      VARCHAR(255),
+    first_name    VARCHAR(255),
+    credits       INTEGER NOT NULL DEFAULT 0,
+    free_generations_left INTEGER NOT NULL DEFAULT 0,
+    content_violations INTEGER NOT NULL DEFAULT 0,
+    is_blocked    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    last_generation_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS generations (
+    id            SERIAL PRIMARY KEY,
+    user_id       BIGINT NOT NULL REFERENCES users(telegram_id),
+    suno_song_ids TEXT[],
+    prompt        TEXT,
+    style         VARCHAR(255),
+    voice_gender  VARCHAR(10),
+    mode          VARCHAR(20) NOT NULL DEFAULT 'description',
+    status        VARCHAR(20) NOT NULL DEFAULT 'pending',
+    audio_urls    TEXT[],
+    tg_file_ids   TEXT[],
+    credits_spent INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    completed_at  TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id              SERIAL PRIMARY KEY,
+    user_id         BIGINT NOT NULL REFERENCES users(telegram_id),
+    tg_payment_id   VARCHAR(255),
+    stars_amount    INTEGER NOT NULL,
+    credits_purchased INTEGER NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_generations_user_id ON generations(user_id);
+CREATE INDEX IF NOT EXISTS idx_generations_created_at ON generations(created_at);
+CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+"""
+
+
+# ─── User operations ───
+
+async def get_or_create_user(telegram_id: int, username: str | None, first_name: str | None) -> dict:
+    """Get existing user or create new one with free credits."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
+        if row:
+            return dict(row)
+        # New user
+        row = await conn.fetchrow(
+            """INSERT INTO users (telegram_id, username, first_name, credits, free_generations_left)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING *""",
+            telegram_id, username, first_name,
+            0,  # credits start at 0
+            config.free_credits_on_signup,
+        )
+        logger.info(f"New user registered: {telegram_id} ({username})")
+        return dict(row)
+
+
+async def get_user(telegram_id: int) -> dict | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
+        return dict(row) if row else None
+
+
+async def update_user_credits(telegram_id: int, delta: int) -> int:
+    """Add (positive) or subtract (negative) credits. Returns new balance."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE users SET credits = credits + $2 WHERE telegram_id = $1 RETURNING credits",
+            telegram_id, delta,
+        )
+        return row["credits"]
+
+
+async def use_free_generation(telegram_id: int) -> bool:
+    """Try to use a free generation. Returns True if successful."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """UPDATE users
+               SET free_generations_left = free_generations_left - 1
+               WHERE telegram_id = $1 AND free_generations_left > 0
+               RETURNING free_generations_left""",
+            telegram_id,
+        )
+        return row is not None
+
+
+async def update_last_generation(telegram_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET last_generation_at = NOW() WHERE telegram_id = $1",
+            telegram_id,
+        )
+
+
+async def increment_content_violations(telegram_id: int) -> int:
+    """Increment violations and block if >= 3. Returns new count."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """UPDATE users
+               SET content_violations = content_violations + 1,
+                   is_blocked = CASE WHEN content_violations + 1 >= 3 THEN TRUE ELSE is_blocked END
+               WHERE telegram_id = $1
+               RETURNING content_violations, is_blocked""",
+            telegram_id,
+        )
+        return row["content_violations"]
+
+
+# ─── Generation operations ───
+
+async def create_generation(user_id: int, prompt: str, style: str,
+                            voice_gender: str | None, mode: str) -> int:
+    """Create a generation record and return its ID."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO generations (user_id, prompt, style, voice_gender, mode, status)
+               VALUES ($1, $2, $3, $4, $5, 'pending')
+               RETURNING id""",
+            user_id, prompt, style, voice_gender, mode,
+        )
+        return row["id"]
+
+
+async def update_generation_status(gen_id: int, status: str, **kwargs):
+    """Update generation status and optional fields."""
+    sets = ["status = $2"]
+    values = [gen_id, status]
+    idx = 3
+
+    if "suno_song_ids" in kwargs:
+        sets.append(f"suno_song_ids = ${idx}")
+        values.append(kwargs["suno_song_ids"])
+        idx += 1
+    if "audio_urls" in kwargs:
+        sets.append(f"audio_urls = ${idx}")
+        values.append(kwargs["audio_urls"])
+        idx += 1
+    if "tg_file_ids" in kwargs:
+        sets.append(f"tg_file_ids = ${idx}")
+        values.append(kwargs["tg_file_ids"])
+        idx += 1
+    if "credits_spent" in kwargs:
+        sets.append(f"credits_spent = ${idx}")
+        values.append(kwargs["credits_spent"])
+        idx += 1
+    if "error_message" in kwargs:
+        sets.append(f"error_message = ${idx}")
+        values.append(kwargs["error_message"])
+        idx += 1
+    if status in ("complete", "error"):
+        sets.append(f"completed_at = ${idx}")
+        values.append(datetime.utcnow())
+        idx += 1
+
+    query = f"UPDATE generations SET {', '.join(sets)} WHERE id = $1"
+    async with pool.acquire() as conn:
+        await conn.execute(query, *values)
+
+
+async def get_user_generations(user_id: int, limit: int = 10) -> list[dict]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM generations
+               WHERE user_id = $1 AND status = 'complete'
+               ORDER BY created_at DESC LIMIT $2""",
+            user_id, limit,
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_generation(gen_id: int) -> dict | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM generations WHERE id = $1", gen_id)
+        return dict(row) if row else None
+
+
+async def count_user_generations_today(user_id: int) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT COUNT(*) as cnt FROM generations
+               WHERE user_id = $1 AND created_at >= CURRENT_DATE""",
+            user_id,
+        )
+        return row["cnt"]
+
+
+async def count_generations_last_hour() -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) as cnt FROM generations WHERE created_at >= NOW() - INTERVAL '1 hour'"
+        )
+        return row["cnt"]
+
+
+# ─── Payment operations ───
+
+async def create_payment(user_id: int, tg_payment_id: str, stars: int, credits: int) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO payments (user_id, tg_payment_id, stars_amount, credits_purchased, status)
+               VALUES ($1, $2, $3, $4, 'completed')
+               RETURNING id""",
+            user_id, tg_payment_id, stars, credits,
+        )
+        # Add credits to user
+        await conn.execute(
+            "UPDATE users SET credits = credits + $2 WHERE telegram_id = $1",
+            user_id, credits,
+        )
+        return row["id"]
