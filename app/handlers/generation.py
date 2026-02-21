@@ -11,18 +11,19 @@ from aiogram.fsm.context import FSMContext
 from app import database as db
 from app.config import config
 from app.keyboards import (
-    mode_kb, gender_kb, style_kb, result_kb,
+    gender_kb, style_kb, result_kb,
     back_menu_kb, main_menu_kb,
 )
 from app.states import GenerationStates
 from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
 from app.texts import (
-    CHOOSE_MODE, CHOOSE_GENDER, CHOOSE_STYLE,
-    ENTER_PROMPT, ENTER_LYRICS, ENTER_CUSTOM_STYLE,
+    CHOOSE_GENDER, CHOOSE_STYLE,
+    ENTER_PROMPT, ENTER_CUSTOM_STYLE,
     GENERATING, GENERATION_COMPLETE, GENERATION_ERROR,
     CONTENT_VIOLATION, NO_CREDITS, BLOCKED,
     RATE_LIMIT_USER, RATE_LIMIT_GLOBAL,
     HISTORY_EMPTY, HISTORY_HEADER, DOWNLOAD_SUCCESS, DOWNLOAD_NO_CREDITS,
+    RATING_THANKS,
 )
 
 router = Router()
@@ -60,17 +61,14 @@ async def check_credits(user_id: int) -> tuple[bool, dict]:
     # Account age check for free credits
     has_free = user["free_generations_left"] > 0
     if has_free and config.min_account_age_hours > 0:
-        # Use datetime.now() to match PostgreSQL NOW() (both use server local time)
         account_age = datetime.now() - user["created_at"]
         min_age = timedelta(hours=config.min_account_age_hours)
         if account_age < min_age:
-            # Too new in bot — only paid credits count
             has_free = False
 
     # Telegram account age check (higher ID = newer account)
     if has_free and config.min_telegram_user_id > 0:
         if user_id > config.min_telegram_user_id:
-            # Suspiciously new Telegram account — block free credits
             has_free = False
 
     has = (user["credits"] > 0 or has_free)
@@ -80,7 +78,7 @@ async def check_credits(user_id: int) -> tuple[bool, dict]:
 # ─── Start creation flow ───
 
 async def start_creation(message_or_cb, state: FSMContext):
-    """Entry point for creation flow."""
+    """Entry point for creation flow — goes directly to gender selection."""
     user_id = (
         message_or_cb.from_user.id
         if isinstance(message_or_cb, (Message, CallbackQuery))
@@ -109,41 +107,19 @@ async def start_creation(message_or_cb, state: FSMContext):
             await message_or_cb.answer(text, parse_mode="HTML", reply_markup=back_menu_kb())
         return
 
-    await state.set_state(GenerationStates.choosing_mode)
+    # Skip mode selection — go directly to gender
+    await state.update_data(mode="description")
+    await state.set_state(GenerationStates.choosing_gender)
     if isinstance(message_or_cb, CallbackQuery):
-        await message_or_cb.message.edit_text(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
+        await message_or_cb.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
         await message_or_cb.answer()
     else:
-        await message_or_cb.answer(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
+        await message_or_cb.answer(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
 
 
 @router.callback_query(F.data == "create")
 async def cb_create(callback: CallbackQuery, state: FSMContext):
     await start_creation(callback, state)
-
-
-# ─── Mode selection ───
-
-@router.callback_query(F.data.startswith("mode:"))
-async def cb_mode(callback: CallbackQuery, state: FSMContext):
-    mode = callback.data.split(":")[1]
-    await state.update_data(mode=mode)
-
-    if mode == "instrumental":
-        # Skip gender, go to style
-        await state.set_state(GenerationStates.choosing_style)
-        await callback.message.edit_text(CHOOSE_STYLE, parse_mode="HTML", reply_markup=style_kb())
-    else:
-        await state.set_state(GenerationStates.choosing_gender)
-        await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "back_mode")
-async def cb_back_mode(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(GenerationStates.choosing_mode)
-    await callback.message.edit_text(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
-    await callback.answer()
 
 
 # ─── Gender selection ───
@@ -159,13 +135,8 @@ async def cb_gender(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "back_gender")
 async def cb_back_gender(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    if data.get("mode") == "instrumental":
-        await state.set_state(GenerationStates.choosing_mode)
-        await callback.message.edit_text(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
-    else:
-        await state.set_state(GenerationStates.choosing_gender)
-        await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
+    await state.set_state(GenerationStates.choosing_gender)
+    await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
     await callback.answer()
 
 
@@ -173,7 +144,7 @@ async def cb_back_gender(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("style:"))
 async def cb_style(callback: CallbackQuery, state: FSMContext):
-    style = callback.data.split(":")[1]
+    style = callback.data.split(":", 1)[1]
 
     if style == "custom_style":
         await state.set_state(GenerationStates.entering_custom_style)
@@ -182,28 +153,16 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.update_data(style=style)
-    data = await state.get_data()
-
-    if data.get("mode") == "custom":
-        await state.set_state(GenerationStates.entering_lyrics)
-        await callback.message.edit_text(ENTER_LYRICS, parse_mode="HTML", reply_markup=back_menu_kb())
-    else:
-        await state.set_state(GenerationStates.entering_prompt)
-        await callback.message.edit_text(ENTER_PROMPT, parse_mode="HTML", reply_markup=back_menu_kb())
+    await state.set_state(GenerationStates.entering_prompt)
+    await callback.message.edit_text(ENTER_PROMPT, parse_mode="HTML", reply_markup=back_menu_kb())
     await callback.answer()
 
 
 @router.message(GenerationStates.entering_custom_style)
 async def on_custom_style(message: Message, state: FSMContext):
     await state.update_data(style=message.text.strip())
-    data = await state.get_data()
-
-    if data.get("mode") == "custom":
-        await state.set_state(GenerationStates.entering_lyrics)
-        await message.answer(ENTER_LYRICS, parse_mode="HTML", reply_markup=back_menu_kb())
-    else:
-        await state.set_state(GenerationStates.entering_prompt)
-        await message.answer(ENTER_PROMPT, parse_mode="HTML", reply_markup=back_menu_kb())
+    await state.set_state(GenerationStates.entering_prompt)
+    await message.answer(ENTER_PROMPT, parse_mode="HTML", reply_markup=back_menu_kb())
 
 
 # ─── Text input ───
@@ -212,18 +171,6 @@ async def on_custom_style(message: Message, state: FSMContext):
 async def on_prompt(message: Message, state: FSMContext):
     await state.update_data(prompt=message.text.strip())
     await do_generate(message, state)
-
-
-@router.message(GenerationStates.entering_lyrics)
-async def on_lyrics(message: Message, state: FSMContext):
-    await state.update_data(lyrics=message.text.strip())
-    # For custom mode, use lyrics as the main content, prompt is title
-    await state.set_state(GenerationStates.entering_prompt)
-    await message.answer(
-        "📝 <b>Введите название песни:</b>",
-        parse_mode="HTML",
-        reply_markup=back_menu_kb(),
-    )
 
 
 # ─── Generation ───
@@ -236,7 +183,6 @@ async def do_generate(message: Message, state: FSMContext):
     style = data.get("style", "")
     voice_gender = data.get("voice_gender")
     prompt = data.get("prompt", "")
-    lyrics = data.get("lyrics")
 
     # Final credit check
     has_credits, user = await check_credits(user_id)
@@ -257,7 +203,7 @@ async def do_generate(message: Message, state: FSMContext):
         user_id=user_id,
         prompt=prompt,
         style=style,
-        voice_gender=voice_gender if mode != "instrumental" else None,
+        voice_gender=voice_gender,
         mode=mode,
     )
 
@@ -268,10 +214,9 @@ async def do_generate(message: Message, state: FSMContext):
         result = await client.generate(
             prompt=prompt,
             style=style,
-            voice_gender=voice_gender if mode != "instrumental" else None,
+            voice_gender=voice_gender,
             mode=mode,
-            lyrics=lyrics,
-            instrumental=(mode == "instrumental"),
+            instrumental=False,
         )
 
         task_id = result["task_id"]
@@ -353,6 +298,33 @@ async def do_generate(message: Message, state: FSMContext):
 
     finally:
         await state.clear()
+
+
+# ─── Rating ───
+
+@router.callback_query(F.data.startswith("rate:"))
+async def cb_rate(callback: CallbackQuery):
+    """Save user's rating for a generation."""
+    parts = callback.data.split(":")
+    gen_id = int(parts[1])
+    rating = int(parts[2])
+
+    if rating < 1 or rating > 10:
+        await callback.answer("Некорректная оценка", show_alert=True)
+        return
+
+    gen = await db.get_generation(gen_id)
+    if not gen:
+        await callback.answer("Генерация не найдена", show_alert=True)
+        return
+
+    # Verify it's the owner
+    if gen["user_id"] != callback.from_user.id:
+        await callback.answer("Это не ваша генерация", show_alert=True)
+        return
+
+    await db.update_generation_rating(gen_id, rating)
+    await callback.answer(f"⭐ Оценка {rating}/10 сохранена!")
 
 
 # ─── Result actions ───
@@ -460,7 +432,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         style=gen.get("style", ""),
         voice_gender=gen.get("voice_gender"),
         prompt=gen.get("prompt", ""),
-        lyrics=None,
     )
 
     # Fake message for do_generate (use callback message as proxy)
@@ -495,7 +466,7 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             style=data.get("style", ""),
             voice_gender=data.get("voice_gender"),
             mode=data.get("mode", "description"),
-            instrumental=(data.get("mode") == "instrumental"),
+            instrumental=False,
         )
 
         task_id = result["task_id"]
@@ -574,7 +545,8 @@ async def show_history(message: Message):
         date = g["created_at"].strftime("%d.%m %H:%M")
         style = g.get("style", "")
         prompt = (g.get("prompt", "")[:40] + "...") if len(g.get("prompt", "")) > 40 else g.get("prompt", "")
-        lines.append(f"\n{i}. 🎵 <i>{prompt}</i>")
+        rating = f" ⭐{g.get('rating', '')}" if g.get("rating") else ""
+        lines.append(f"\n{i}. 🎵 <i>{prompt}</i>{rating}")
         lines.append(f"   📅 {date} | 🎼 {style}")
 
     await message.answer(
@@ -597,7 +569,8 @@ async def cb_history(callback: CallbackQuery):
         date = g["created_at"].strftime("%d.%m %H:%M")
         style = g.get("style", "")
         prompt = (g.get("prompt", "")[:40] + "...") if len(g.get("prompt", "")) > 40 else g.get("prompt", "")
-        lines.append(f"\n{i}. 🎵 <i>{prompt}</i>")
+        rating = f" ⭐{g.get('rating', '')}" if g.get("rating") else ""
+        lines.append(f"\n{i}. 🎵 <i>{prompt}</i>{rating}")
         lines.append(f"   📅 {date} | 🎼 {style}")
 
     await callback.message.edit_text(

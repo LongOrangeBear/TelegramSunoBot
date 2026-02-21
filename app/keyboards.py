@@ -18,17 +18,9 @@ def main_menu_kb(credits: int, free_left: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
     )
     builder.row(
+        InlineKeyboardButton(text="📤 Поделиться ботом", callback_data="invite"),
         InlineKeyboardButton(text="❓ Помощь", callback_data="help"),
     )
-    return builder.as_markup()
-
-
-def mode_kb() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📝 По описанию", callback_data="mode:description"))
-    builder.row(InlineKeyboardButton(text="🎤 Свой текст", callback_data="mode:custom"))
-    builder.row(InlineKeyboardButton(text="🎹 Инструментал", callback_data="mode:instrumental"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu"))
     return builder.as_markup()
 
 
@@ -38,31 +30,36 @@ def gender_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🚹 Мужской", callback_data="gender:male"),
         InlineKeyboardButton(text="🚺 Женский", callback_data="gender:female"),
     )
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_mode"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu"))
     return builder.as_markup()
 
 
 STYLES = [
     ("🎸 Рок", "rock"),
     ("🎹 Поп", "pop"),
-    ("🎷 Джаз", "jazz"),
-    ("🎻 Классика", "classical"),
-    ("🎵 R&B", "rnb"),
-    ("🔊 Электро", "electronic"),
+    ("🎤 Рэп", "rap"),
     ("🎶 Хип-хоп", "hip-hop"),
-    ("🌍 World", "world music"),
+    ("🎷 Джаз / Соул", "jazz soul"),
+    ("🎻 Классика", "classical"),
+    ("🔊 Электро", "electronic edm"),
+    ("🎤 Шансон", "russian chanson"),
+    ("💔 Баллада", "ballad"),
+    ("🪗 Русская народная", "russian folk"),
+    ("🎉 Праздничная", "holiday celebration"),
     ("✏️ Свой стиль", "custom_style"),
 ]
 
 
 def style_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for i in range(0, len(STYLES) - 1, 3):
+    # All styles except last (custom) in rows of 3
+    regular_styles = [s for s in STYLES if s[1] != "custom_style"]
+    for i in range(0, len(regular_styles), 3):
         row = []
-        for label, data in STYLES[i:i+3]:
+        for label, data in regular_styles[i:i+3]:
             row.append(InlineKeyboardButton(text=label, callback_data=f"style:{data}"))
         builder.row(*row)
-    # Last button
+    # Custom style button
     builder.row(InlineKeyboardButton(text="✏️ Свой стиль", callback_data="style:custom_style"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_gender"))
     return builder.as_markup()
@@ -81,9 +78,28 @@ def result_kb(gen_id: int) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="🔄 Ещё варианты (−1💎)", callback_data=f"regenerate:{gen_id}"),
     )
+    # Rating bar (10 stars)
+    rating_row = []
+    for i in range(1, 11):
+        rating_row.append(
+            InlineKeyboardButton(text=f"{'⭐' if i <= 5 else '⭐'}", callback_data=f"rate:{gen_id}:{i}")
+        )
+    # Split into 2 rows of 5
+    builder.row(*rating_row[:5])
+    builder.row(*rating_row[5:])
     builder.row(
         InlineKeyboardButton(text="🏠 Меню", callback_data="back_menu"),
     )
+    return builder.as_markup()
+
+
+def rating_kb(gen_id: int) -> InlineKeyboardMarkup:
+    """Standalone rating keyboard with numbered stars."""
+    builder = InlineKeyboardBuilder()
+    row1 = [InlineKeyboardButton(text=str(i), callback_data=f"rate:{gen_id}:{i}") for i in range(1, 6)]
+    row2 = [InlineKeyboardButton(text=str(i), callback_data=f"rate:{gen_id}:{i}") for i in range(6, 11)]
+    builder.row(*row1)
+    builder.row(*row2)
     return builder.as_markup()
 
 

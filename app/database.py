@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS users (
     free_generations_left INTEGER NOT NULL DEFAULT 0,
     content_violations INTEGER NOT NULL DEFAULT 0,
     is_blocked    BOOLEAN NOT NULL DEFAULT FALSE,
+    referred_by   BIGINT,
     created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
     last_generation_at TIMESTAMP
 );
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS generations (
     audio_urls    TEXT[],
     tg_file_ids   TEXT[],
     credits_spent INTEGER NOT NULL DEFAULT 0,
+    rating        INTEGER,
     error_message TEXT,
     callback_chat_id  BIGINT,
     callback_message_id BIGINT,
@@ -73,12 +75,24 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS idx_generations_user_id ON generations(user_id);
 CREATE INDEX IF NOT EXISTS idx_generations_created_at ON generations(created_at);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+
+-- Migration: add new columns if they don't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='referred_by') THEN
+        ALTER TABLE users ADD COLUMN referred_by BIGINT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='rating') THEN
+        ALTER TABLE generations ADD COLUMN rating INTEGER;
+    END IF;
+END $$;
 """
 
 
 # ─── User operations ───
 
-async def get_or_create_user(telegram_id: int, username: str | None, first_name: str | None) -> dict:
+async def get_or_create_user(telegram_id: int, username: str | None, first_name: str | None,
+                             referred_by: int | None = None) -> dict:
     """Get existing user or create new one with free credits."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
@@ -86,14 +100,15 @@ async def get_or_create_user(telegram_id: int, username: str | None, first_name:
             return dict(row)
         # New user
         row = await conn.fetchrow(
-            """INSERT INTO users (telegram_id, username, first_name, credits, free_generations_left)
-               VALUES ($1, $2, $3, $4, $5)
+            """INSERT INTO users (telegram_id, username, first_name, credits, free_generations_left, referred_by)
+               VALUES ($1, $2, $3, $4, $5, $6)
                RETURNING *""",
             telegram_id, username, first_name,
             0,  # credits start at 0
             config.free_credits_on_signup,
+            referred_by,
         )
-        logger.info(f"New user registered: {telegram_id} ({username})")
+        logger.info(f"New user registered: {telegram_id} ({username}), referred_by={referred_by}")
         return dict(row)
 
 
@@ -146,6 +161,16 @@ async def increment_content_violations(telegram_id: int) -> int:
             telegram_id,
         )
         return row["content_violations"]
+
+
+async def count_referrals(telegram_id: int) -> int:
+    """Count how many users were referred by this user."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) as cnt FROM users WHERE referred_by = $1",
+            telegram_id,
+        )
+        return row["cnt"]
 
 
 # ─── Generation operations ───
@@ -218,6 +243,15 @@ async def update_generation_status(gen_id: int, status: str, **kwargs):
         await conn.execute(query, *values)
 
 
+async def update_generation_rating(gen_id: int, rating: int):
+    """Save user rating for a generation."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE generations SET rating = $2 WHERE id = $1",
+            gen_id, rating,
+        )
+
+
 async def get_user_generations(user_id: int, limit: int = 10) -> list[dict]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -287,6 +321,9 @@ async def admin_get_stats() -> dict:
         total_credits_sold = await conn.fetchval(
             "SELECT COALESCE(SUM(credits_purchased), 0) FROM payments"
         )
+        avg_rating = await conn.fetchval(
+            "SELECT ROUND(AVG(rating)::numeric, 1) FROM generations WHERE rating IS NOT NULL"
+        )
         return {
             "users_count": users_count,
             "gens_count": gens_count,
@@ -295,6 +332,7 @@ async def admin_get_stats() -> dict:
             "payments_count": payments_count,
             "total_stars": total_stars,
             "total_credits_sold": total_credits_sold,
+            "avg_rating": avg_rating or "—",
         }
 
 
@@ -304,7 +342,8 @@ async def admin_get_users(limit: int = 100, offset: int = 0) -> list[dict]:
             """SELECT u.*,
                       (SELECT COUNT(*) FROM generations g WHERE g.user_id = u.telegram_id) as gen_count,
                       (SELECT COUNT(*) FROM payments p WHERE p.user_id = u.telegram_id) as pay_count,
-                      (SELECT COALESCE(SUM(p.stars_amount), 0) FROM payments p WHERE p.user_id = u.telegram_id) as total_stars
+                      (SELECT COALESCE(SUM(p.stars_amount), 0) FROM payments p WHERE p.user_id = u.telegram_id) as total_stars,
+                      (SELECT COUNT(*) FROM users r WHERE r.referred_by = u.telegram_id) as referral_count
                FROM users u
                ORDER BY u.created_at DESC
                LIMIT $1 OFFSET $2""",
@@ -326,10 +365,14 @@ async def admin_get_user_detail(telegram_id: int) -> dict | None:
             """SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50""",
             telegram_id,
         )
+        referral_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM users WHERE referred_by = $1", telegram_id
+        )
         return {
             "user": dict(user),
             "generations": [dict(g) for g in gens],
             "payments": [dict(p) for p in pays],
+            "referral_count": referral_count,
         }
 
 
@@ -357,4 +400,3 @@ async def admin_get_payments(limit: int = 100, offset: int = 0) -> list[dict]:
             limit, offset,
         )
         return [dict(r) for r in rows]
-

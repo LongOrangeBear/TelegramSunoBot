@@ -177,10 +177,26 @@ def base_html(title: str, content: str, token: str) -> str:
         a.link:hover {{ text-decoration: underline; }}
         .prompt-cell {{
             max-width: 300px;
+            cursor: pointer;
+        }}
+        .prompt-short {{
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            max-width: 300px;
         }}
+        .prompt-full {{
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-width: 500px;
+            background: rgba(139, 92, 246, 0.08);
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin-top: 4px;
+        }}
+        .prompt-cell.expanded .prompt-short {{ display: none; }}
+        .prompt-cell.expanded .prompt-full {{ display: block; }}
         .pagination {{
             display: flex;
             gap: 12px;
@@ -224,6 +240,49 @@ def base_html(title: str, content: str, token: str) -> str:
             margin: 28px 0 14px;
         }}
         .empty {{ text-align: center; padding: 40px; color: #6b7280; }}
+        .admin-form {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .admin-input {{
+            background: #1e1e3f;
+            color: #e0e0e0;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 14px;
+            width: 80px;
+        }}
+        .admin-input:focus {{
+            outline: none;
+            border-color: #a78bfa;
+        }}
+        .admin-btn {{
+            background: linear-gradient(135deg, #7c3aed, #6366f1);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }}
+        .admin-btn:hover {{ opacity: 0.85; }}
+        .admin-btn-green {{
+            background: linear-gradient(135deg, #059669, #10b981);
+        }}
+        .success-msg {{
+            display: inline-block;
+            padding: 4px 12px;
+            background: rgba(34, 197, 94, 0.15);
+            color: #4ade80;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-left: 8px;
+        }}
         @media (max-width: 768px) {{
             nav {{ padding: 12px 16px; gap: 12px; }}
             .container {{ padding: 16px 12px; }}
@@ -234,6 +293,11 @@ def base_html(title: str, content: str, token: str) -> str:
             thead th, tbody td {{ padding: 8px 10px; }}
         }}
     </style>
+    <script>
+        function togglePrompt(el) {{
+            el.classList.toggle('expanded');
+        }}
+    </script>
 </head>
 <body>
     <nav>
@@ -283,6 +347,12 @@ async def dashboard(request: web.Request):
         for m in config.available_models
     )
 
+    # Check for success messages
+    success = request.query.get("success", "")
+    success_html = ""
+    if success == "credits_set":
+        success_html = '<span class="success-msg">✅ Стартовые кредиты обновлены</span>'
+
     content = f"""
     <h1>📊 Дашборд</h1>
     <div class="stats-grid">
@@ -318,6 +388,10 @@ async def dashboard(request: web.Request):
             <div class="value">{stats['total_credits_sold']}💎</div>
             <div class="label">Кредитов продано</div>
         </div>
+        <div class="stat-card">
+            <div class="value">⭐{stats['avg_rating']}</div>
+            <div class="label">Средняя оценка</div>
+        </div>
     </div>
 
     <div class="section-title">⚙️ Конфигурация</div>
@@ -327,17 +401,27 @@ async def dashboard(request: web.Request):
             <tr>
                 <td>🤖 Модель генерации</td>
                 <td>
-                    <form method="POST" action="/admin/set_model?{tp}" style="display:inline-flex;align-items:center;gap:8px;">
-                        <select name="model" style="background:#1e1e3f;color:#e0e0e0;border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:6px 12px;font-size:14px;cursor:pointer;">
+                    <form method="POST" action="/admin/set_model?{tp}" class="admin-form">
+                        <select name="model" class="admin-input" style="width:auto;">
                             {model_options}
                         </select>
-                        <button type="submit" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:white;border:none;border-radius:8px;padding:6px 16px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity 0.2s;">Применить</button>
+                        <button type="submit" class="admin-btn">Применить</button>
                     </form>
                 </td>
                 <td>Версия модели Suno AI для генерации музыки</td>
             </tr>
+            <tr>
+                <td>🎁 Стартовые кредиты</td>
+                <td>
+                    <form method="POST" action="/admin/set_free_credits?{tp}" class="admin-form">
+                        <input type="number" name="free_credits" value="{config.free_credits_on_signup}" min="0" max="100" class="admin-input">
+                        <button type="submit" class="admin-btn">Сохранить</button>
+                    </form>
+                    {success_html}
+                </td>
+                <td>Кол-во бесплатных кредитов при первом /start</td>
+            </tr>
             <tr><td>📡 API URL</td><td><code>{config.suno_api_url}</code></td><td>URL провайдера API</td></tr>
-            <tr><td>🎁 Бесплатные кредиты</td><td>{config.free_credits_on_signup}</td><td>Кол-во бесплатных кредитов при первом /start</td></tr>
             <tr><td>📊 Лимит/день на юзера</td><td>{config.max_generations_per_user_per_day}</td><td>Максимум генераций в день на одного пользователя</td></tr>
             <tr><td>📊 Лимит/час глобальный</td><td>{config.max_generations_per_hour}</td><td>Максимум генераций в час по всему боту (защита от перегрузки API)</td></tr>
         </tbody>
@@ -379,6 +463,7 @@ async def users_list(request: web.Request):
     for u in users:
         total_credits = u["credits"] + u["free_generations_left"]
         blocked = '<span class="badge badge-err">BAN</span>' if u["is_blocked"] else ""
+        ref_badge = f'<span class="badge badge-info">{u["referral_count"]}👥</span>' if u.get("referral_count", 0) > 0 else ""
         rows += f"""<tr>
             <td><a class="link" href="/admin/user/{u['telegram_id']}?{tp}">{u['telegram_id']}</a></td>
             <td>{u.get('username') or '—'}</td>
@@ -386,6 +471,7 @@ async def users_list(request: web.Request):
             <td>{total_credits}💎 {blocked}</td>
             <td>{u['gen_count']}</td>
             <td>⭐{u['total_stars']}</td>
+            <td>{ref_badge}</td>
             <td>{fmt_date(u['created_at'])}</td>
         </tr>"""
 
@@ -406,11 +492,12 @@ async def users_list(request: web.Request):
                 <th>Баланс</th>
                 <th>Генераций</th>
                 <th>Stars</th>
+                <th>Рефералы</th>
                 <th>Регистрация</th>
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="7" class="empty">Нет пользователей</td></tr>'}
+            {rows if rows else '<tr><td colspan="8" class="empty">Нет пользователей</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>
@@ -438,17 +525,30 @@ async def user_detail(request: web.Request):
     total_credits = user["credits"] + user["free_generations_left"]
     blocked_badge = ' <span class="badge badge-err">BLOCKED</span>' if user["is_blocked"] else ""
 
+    # Check for success message
+    success = request.query.get("success", "")
+    success_html = ""
+    if success == "credited":
+        amount = request.query.get("amount", "")
+        success_html = f'<span class="success-msg">✅ Начислено {amount}💎</span>'
+
     gen_rows = ""
     for g in data["generations"]:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
-        prompt_text = (g.get("prompt") or "")[:80]
+        prompt_text = g.get("prompt") or ""
+        prompt_short = (prompt_text[:80] + "...") if len(prompt_text) > 80 else prompt_text
+        rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
             <td>{g.get('mode', '—')}</td>
-            <td class="prompt-cell" title="{g.get('prompt', '')}">{prompt_text}</td>
+            <td class="prompt-cell" onclick="togglePrompt(this)">
+                <div class="prompt-short">{prompt_short}</div>
+                <div class="prompt-full">{prompt_text}</div>
+            </td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span></td>
+            <td>{rating_display}</td>
             <td>{g.get('credits_spent', 0)}💎</td>
             <td>{fmt_date(g['created_at'])}</td>
         </tr>"""
@@ -489,7 +589,17 @@ async def user_detail(request: web.Request):
             <div class="value">{user['content_violations']}/3</div>
             <div class="label">Нарушения</div>
         </div>
+        <div class="stat-card">
+            <div class="value">{data['referral_count']}👥</div>
+            <div class="label">Рефералы</div>
+        </div>
     </div>
+
+    <div class="section-title">💎 Начислить кредиты {success_html}</div>
+    <form method="POST" action="/admin/user/{telegram_id}/credit?{tp}" class="admin-form" style="margin-bottom:24px;">
+        <input type="number" name="amount" placeholder="Кол-во" min="1" max="1000" class="admin-input" required>
+        <button type="submit" class="admin-btn admin-btn-green">💎 Начислить</button>
+    </form>
 
     <div class="section-title">🎵 Генерации ({len(data['generations'])})</div>
     <table>
@@ -497,16 +607,17 @@ async def user_detail(request: web.Request):
             <tr>
                 <th>#</th>
                 <th>Режим</th>
-                <th>Промпт</th>
+                <th>Промпт (клик для раскрытия)</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
+                <th>Оценка</th>
                 <th>Кредиты</th>
                 <th>Дата</th>
             </tr>
         </thead>
         <tbody>
-            {gen_rows if gen_rows else '<tr><td colspan="8" class="empty">Нет генераций</td></tr>'}
+            {gen_rows if gen_rows else '<tr><td colspan="9" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
 
@@ -545,16 +656,22 @@ async def generations_list(request: web.Request):
     rows = ""
     for g in gens:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
-        prompt_text = (g.get("prompt") or "")[:60]
+        prompt_text = g.get("prompt") or ""
+        prompt_short = (prompt_text[:60] + "...") if len(prompt_text) > 60 else prompt_text
         user_label = f"@{g['username']}" if g.get("username") else str(g["user_id"])
+        rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         rows += f"""<tr>
             <td>{g['id']}</td>
             <td><a class="link" href="/admin/user/{g['user_id']}?{tp}">{user_label}</a></td>
             <td>{g.get('mode', '—')}</td>
-            <td class="prompt-cell" title="{g.get('prompt', '')}">{prompt_text}</td>
+            <td class="prompt-cell" onclick="togglePrompt(this)">
+                <div class="prompt-short">{prompt_short}</div>
+                <div class="prompt-full">{prompt_text}</div>
+            </td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span></td>
+            <td>{rating_display}</td>
             <td>{g.get('credits_spent', 0)}💎</td>
             <td>{fmt_date(g['created_at'])}</td>
         </tr>"""
@@ -573,16 +690,17 @@ async def generations_list(request: web.Request):
                 <th>#</th>
                 <th>Пользователь</th>
                 <th>Режим</th>
-                <th>Промпт</th>
+                <th>Промпт (клик)</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
+                <th>Оценка</th>
                 <th>Кредиты</th>
                 <th>Дата</th>
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="9" class="empty">Нет генераций</td></tr>'}
+            {rows if rows else '<tr><td colspan="10" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>
@@ -647,7 +765,7 @@ async def payments_list(request: web.Request):
     )
 
 
-# ─── App factory ───
+# ─── Admin actions ───
 
 @auth_required
 async def set_model(request: web.Request):
@@ -664,13 +782,48 @@ async def set_model(request: web.Request):
     raise web.HTTPFound(f"/admin/?{tp}")
 
 
+@auth_required
+async def set_free_credits(request: web.Request):
+    """Change the number of free credits for new users."""
+    tp = token_param(request)
+    data = await request.post()
+    try:
+        new_value = int(data.get("free_credits", config.free_credits_on_signup))
+        if 0 <= new_value <= 100:
+            config.free_credits_on_signup = new_value
+            logger.info(f"Free credits on signup changed to {new_value} via admin panel")
+    except (ValueError, TypeError):
+        pass
+    raise web.HTTPFound(f"/admin/?{tp}&success=credits_set")
+
+
+@auth_required
+async def credit_user(request: web.Request):
+    """Add credits to a user."""
+    tp = token_param(request)
+    telegram_id = int(request.match_info["id"])
+    data = await request.post()
+    try:
+        amount = int(data.get("amount", 0))
+        if 1 <= amount <= 1000:
+            await db.update_user_credits(telegram_id, amount)
+            logger.info(f"Admin credited {amount} to user {telegram_id}")
+    except (ValueError, TypeError):
+        amount = 0
+    raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=credited&amount={amount}")
+
+
+# ─── App factory ───
+
 def create_admin_app() -> web.Application:
     """Create the admin panel web application."""
     app = web.Application()
     app.router.add_get("/admin/", dashboard)
     app.router.add_post("/admin/set_model", set_model)
+    app.router.add_post("/admin/set_free_credits", set_free_credits)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
+    app.router.add_post("/admin/user/{id}/credit", credit_user)
     app.router.add_get("/admin/generations", generations_list)
     app.router.add_get("/admin/payments", payments_list)
     return app
