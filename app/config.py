@@ -2,10 +2,41 @@
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Path to the .env file (project root)
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
+def persist_env_var(key: str, value: str):
+    """Update or add an env var in .env file so changes persist across restarts."""
+    import logging
+    _logger = logging.getLogger(__name__)
+    try:
+        if _ENV_FILE.exists():
+            lines = _ENV_FILE.read_text().splitlines()
+        else:
+            lines = []
+
+        found = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+                lines[i] = f"{key}={value}"
+                found = True
+                break
+
+        if not found:
+            lines.append(f"{key}={value}")
+
+        _ENV_FILE.write_text("\n".join(lines) + "\n")
+        _logger.info(f"Persisted {key}={value} to .env")
+    except Exception as e:
+        _logger.warning(f"Failed to persist {key} to .env: {e}")
 
 
 # Provider configurations: base_url, models
@@ -65,10 +96,12 @@ class Config:
             raise ValueError("BOT_TOKEN is required")
         self.apply_provider(self.api_provider)
         self.credit_packages = [
-            {"credits": 5, "stars": 50, "label": "5🎵 — ⭐50"},
-            {"credits": 15, "stars": 130, "label": "15🎵 — ⭐130"},
-            {"credits": 50, "stars": 400, "label": "50🎵 — ⭐400"},
-            {"credits": 100, "stars": 750, "label": "100🎵 — ⭐750"},
+            {"credits": 1, "stars": 75, "label": "1🎵 — ⭐75"},
+            {"credits": 2, "stars": 140, "label": "2🎵 — ⭐140"},
+            {"credits": 3, "stars": 200, "label": "3🎵 — ⭐200"},
+            {"credits": 5, "stars": 300, "label": "5🎵 — ⭐300"},
+            {"credits": 10, "stars": 500, "label": "10🎵 — ⭐500"},
+            {"credits": 50, "stars": 2000, "label": "50🎵 — ⭐2000"},
         ]
 
     def apply_provider(self, provider: str):

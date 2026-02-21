@@ -10,11 +10,11 @@ def main_menu_kb(credits: int, free_left: int) -> InlineKeyboardMarkup:
     total = credits + free_left
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🎵 Создать трек", callback_data="create"),
+        InlineKeyboardButton(text="🎵 Создать", callback_data="create"),
         InlineKeyboardButton(text="📚 Мои треки", callback_data="history"),
     )
     builder.row(
-        InlineKeyboardButton(text=f"🎵 Песни: {total}", callback_data="buy"),
+        InlineKeyboardButton(text=f"💰 Баланс: {total}", callback_data="buy"),
         InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
     )
     builder.row(

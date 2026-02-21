@@ -5,7 +5,7 @@ from datetime import datetime
 
 from aiohttp import web
 
-from app.config import config, PROVIDER_CONFIGS
+from app.config import config, PROVIDER_CONFIGS, persist_env_var
 from app import database as db
 
 logger = logging.getLogger(__name__)
@@ -796,6 +796,7 @@ async def set_model(request: web.Request):
     new_model = data.get("model", "")
     if new_model in config.available_models:
         config.suno_model = new_model
+        persist_env_var("SUNO_MODEL", new_model)
         # Reset suno client so it picks up any changes
         from app.suno_api import close_suno_client
         await close_suno_client()
@@ -812,6 +813,7 @@ async def set_free_credits(request: web.Request):
         new_value = int(data.get("free_credits", config.free_credits_on_signup))
         if 0 <= new_value <= 100:
             config.free_credits_on_signup = new_value
+            persist_env_var("FREE_CREDITS_ON_SIGNUP", str(new_value))
             logger.info(f"Free credits on signup changed to {new_value} via admin panel")
     except (ValueError, TypeError):
         pass
@@ -826,6 +828,7 @@ async def set_api_provider(request: web.Request):
     new_provider = data.get("provider", "")
     if new_provider in PROVIDER_CONFIGS:
         config.apply_provider(new_provider)
+        persist_env_var("API_PROVIDER", new_provider)
         # Reset suno client so it picks up new URL and API key
         from app.suno_api import close_suno_client
         await close_suno_client()
