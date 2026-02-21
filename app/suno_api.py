@@ -67,7 +67,7 @@ class SunoClient:
                 "instrumental": False,
                 "model": config.suno_model,
                 "style": full_style or "Pop",
-                "title": prompt or "Untitled",
+                "title": (prompt[:77] + "..." if len(prompt) > 80 else prompt) if prompt else "Untitled",
             }
         elif mode == "instrumental":
             # Instrumental: customMode=false, instrumental=true
@@ -81,7 +81,7 @@ class SunoClient:
             # Description mode: customMode=true, instrumental=false
             # prompt = user's description (up to 5000 chars for V5)
             # style = genre + vocal type (up to 1000 chars for V5)
-            auto_title = prompt[:100] if len(prompt) <= 100 else prompt[:97] + "..."
+            auto_title = prompt[:80] if len(prompt) <= 80 else prompt[:77] + "..."
             payload = {
                 "customMode": True,
                 "instrumental": False,
