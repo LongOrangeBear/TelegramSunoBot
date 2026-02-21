@@ -39,6 +39,94 @@ class SunoClient:
     async def close(self):
         await self.client.aclose()
 
+    async def generate_lyrics(self, prompt: str) -> dict:
+        """
+        Generate lyrics from a description via Lyrics API.
+
+        Returns:
+            dict with task_id for polling lyrics status
+        """
+        payload = {"prompt": prompt}
+
+        logger.info(f"Lyrics generation request: /api/v1/lyrics | {payload}")
+
+        try:
+            response = await self.client.post("/api/v1/lyrics", json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("code") != 200:
+                msg = result.get("msg", "Unknown error")
+                raise SunoApiError(f"Lyrics API error: {msg}")
+
+            task_id = result.get("data", {}).get("taskId")
+            if not task_id:
+                raise SunoApiError(f"No taskId in lyrics response: {result}")
+
+            return {"task_id": task_id}
+
+        except httpx.HTTPStatusError as e:
+            error_body = e.response.text
+            if "sensitive" in error_body.lower() or "content policy" in error_body.lower():
+                raise ContentPolicyError(f"Lyrics content filtered: {error_body}")
+            raise SunoApiError(f"Lyrics API error {e.response.status_code}: {error_body}")
+        except httpx.RequestError as e:
+            raise SunoApiError(f"Lyrics request failed: {e}")
+
+    async def wait_for_lyrics(
+        self, task_id: str, timeout: int = 120, poll_interval: int = 5
+    ) -> dict:
+        """
+        Poll until lyrics generation is complete.
+
+        Returns:
+            dict with 'text' (lyrics with structure tags) and 'title'
+        """
+        start_time = asyncio.get_event_loop().time()
+        await asyncio.sleep(3)  # Initial wait
+
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            try:
+                response = await self.client.get(
+                    f"/api/v1/lyrics/record-info?taskId={task_id}"
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                if result.get("code") != 200:
+                    raise SunoApiError(f"Lyrics status check failed: {result.get('msg')}")
+
+                data = result.get("data", {})
+                status = data.get("status", "")
+
+                logger.info(f"Lyrics task {task_id} status: {status}")
+
+                if status == "SUCCESS":
+                    response_data = data.get("response", {})
+                    lyrics_list = response_data.get("data", [])
+                    if lyrics_list:
+                        first = lyrics_list[0]
+                        lyrics_text = first.get("text", "")
+                        lyrics_title = first.get("title", "Untitled")
+                        logger.info(f"Lyrics generated: title='{lyrics_title}', length={len(lyrics_text)}")
+                        return {"text": lyrics_text, "title": lyrics_title}
+                    raise SunoApiError(f"No lyrics data in response: {data}")
+
+                elif status == "SENSITIVE_WORD_ERROR":
+                    error_msg = data.get("errorMessage", "Lyrics filtered")
+                    raise ContentPolicyError(error_msg)
+
+                elif status in ("CREATE_TASK_FAILED", "GENERATE_LYRICS_FAILED", "CALLBACK_EXCEPTION"):
+                    error_msg = data.get("errorMessage", f"Lyrics generation failed: {status}")
+                    raise SunoApiError(error_msg)
+
+            except httpx.HTTPStatusError as e:
+                raise SunoApiError(f"Lyrics status error {e.response.status_code}: {e.response.text}")
+
+            await asyncio.sleep(poll_interval)
+
+        raise SunoApiError(f"Lyrics generation timeout after {timeout}s")
+
     async def generate(
         self,
         prompt: str,
@@ -47,9 +135,17 @@ class SunoClient:
         mode: str = "description",
         lyrics: Optional[str] = None,
         instrumental: bool = False,
+        on_lyrics_ready: Optional[callable] = None,
     ) -> dict:
         """
         Start a song generation via v1 API.
+
+        In description mode, first generates lyrics from the description,
+        then uses those lyrics in custom mode for music generation.
+
+        Args:
+            on_lyrics_ready: optional async callback called when lyrics are generated
+                             (for updating user-facing status messages)
 
         Returns:
             dict with task_id for polling
@@ -78,17 +174,32 @@ class SunoClient:
                 "model": config.suno_model,
             }
         else:
-            # Description mode: customMode=true, instrumental=false
-            # prompt = user's description (up to 5000 chars for V5)
-            # style = genre + vocal type (up to 1000 chars for V5)
-            auto_title = prompt[:80] if len(prompt) <= 80 else prompt[:77] + "..."
+            # Description mode: two-step generation
+            # Step 1: Generate lyrics from user's description
+            logger.info(f"Description mode: generating lyrics from description...")
+            lyrics_result = await self.generate_lyrics(prompt)
+            lyrics_data = await self.wait_for_lyrics(lyrics_result["task_id"])
+
+            generated_lyrics = lyrics_data["text"]
+            generated_title = lyrics_data["title"]
+
+            logger.info(f"Lyrics ready, title='{generated_title}', generating music...")
+
+            # Notify caller that lyrics are ready (for UI updates)
+            if on_lyrics_ready:
+                try:
+                    await on_lyrics_ready(generated_lyrics, generated_title)
+                except Exception as e:
+                    logger.warning(f"on_lyrics_ready callback error: {e}")
+
+            # Step 2: Use generated lyrics in custom mode
             payload = {
                 "customMode": True,
                 "instrumental": False,
                 "model": config.suno_model,
-                "prompt": prompt[:5000],
+                "prompt": generated_lyrics[:5000],
                 "style": full_style[:1000] if full_style else "Pop",
-                "title": auto_title,
+                "title": generated_title[:80],
             }
 
         # Add callback URL if configured

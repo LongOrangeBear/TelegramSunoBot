@@ -19,7 +19,7 @@ from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
 from app.texts import (
     CHOOSE_GENDER, CHOOSE_STYLE,
     ENTER_PROMPT, ENTER_CUSTOM_STYLE,
-    GENERATING, GENERATION_COMPLETE, GENERATION_ERROR,
+    GENERATING, GENERATING_MUSIC, GENERATION_COMPLETE, GENERATION_ERROR,
     CONTENT_VIOLATION, NO_CREDITS, BLOCKED,
     RATE_LIMIT_USER, RATE_LIMIT_GLOBAL,
     HISTORY_EMPTY, HISTORY_HEADER, DOWNLOAD_SUCCESS, DOWNLOAD_NO_CREDITS,
@@ -210,13 +210,21 @@ async def do_generate(message: Message, state: FSMContext):
     try:
         client = get_suno_client()
 
-        # Call Suno v1 API
+        # Create callback for live status updates
+        async def on_lyrics_ready(lyrics_text, lyrics_title):
+            try:
+                await status_msg.edit_text(GENERATING_MUSIC, parse_mode="HTML")
+            except Exception:
+                pass
+
+        # Call Suno v1 API (two-step: lyrics → music in description mode)
         result = await client.generate(
             prompt=prompt,
             style=style,
             voice_gender=voice_gender,
             mode=mode,
             instrumental=False,
+            on_lyrics_ready=on_lyrics_ready,
         )
 
         task_id = result["task_id"]
@@ -461,12 +469,21 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
 
     try:
         client = get_suno_client()
+
+        # Create callback for live status updates
+        async def on_lyrics_ready(lyrics_text, lyrics_title):
+            try:
+                await msg.edit_text(GENERATING_MUSIC, parse_mode="HTML")
+            except Exception:
+                pass
+
         result = await client.generate(
             prompt=data.get("prompt", ""),
             style=data.get("style", ""),
             voice_gender=data.get("voice_gender"),
             mode=data.get("mode", "description"),
             instrumental=False,
+            on_lyrics_ready=on_lyrics_ready,
         )
 
         task_id = result["task_id"]
