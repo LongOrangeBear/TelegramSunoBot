@@ -407,6 +407,8 @@ async def dashboard(request: web.Request):
         success_html = '<span class="success-msg">✅ Стартовые кредиты обновлены</span>'
     elif success == "provider_set":
         success_html = f'<span class="success-msg">✅ Провайдер изменён на {PROVIDER_CONFIGS.get(config.api_provider, {}).get("label", config.api_provider)}</span>'
+    elif success == "daily_limit_set":
+        success_html = f'<span class="success-msg">✅ Лимит изменён на {config.max_generations_per_user_per_day}/день</span>'
 
     content = f"""
     <h1>📊 Дашборд</h1>
@@ -496,7 +498,16 @@ async def dashboard(request: web.Request):
                 <td>Кол-во бесплатных кредитов при первом /start</td>
             </tr>
             <tr><td>📡 API URL</td><td><code>{config.suno_api_url}</code> <span class="badge badge-info">{provider_label}</span></td><td>URL провайдера API (обновляется автоматически при смене провайдера)</td></tr>
-            <tr><td>📊 Лимит/день на юзера</td><td>{config.max_generations_per_user_per_day}</td><td>Максимум генераций в день на одного пользователя</td></tr>
+            <tr>
+                <td>📊 Лимит/день на юзера</td>
+                <td>
+                    <form method="POST" action="/admin/set_daily_limit?{tp}" class="admin-form">
+                        <input type="number" name="daily_limit" value="{config.max_generations_per_user_per_day}" min="1" max="1000" class="admin-input">
+                        <button type="submit" class="admin-btn">Сохранить</button>
+                    </form>
+                </td>
+                <td>Максимум генераций в день на одного пользователя</td>
+            </tr>
             <tr><td>📊 Лимит/час глобальный</td><td>{config.max_generations_per_hour}</td><td>Максимум генераций в час по всему боту (защита от перегрузки API)</td></tr>
         </tbody>
     </table>
@@ -605,6 +616,11 @@ async def user_detail(request: web.Request):
     if success == "credited":
         amount = request.query.get("amount", "")
         success_html = f'<span class="success-msg">✅ Начислено {amount}🎵</span>'
+    elif success == "counter_reset":
+        success_html = '<span class="success-msg">✅ Счётчик генераций сброшен</span>'
+
+    # Get today's generation count
+    today_count = await db.count_user_generations_today(telegram_id)
 
     gen_rows = ""
     for g in data["generations"]:
@@ -669,11 +685,17 @@ async def user_detail(request: web.Request):
         </div>
     </div>
 
-    <div class="section-title">🎵 Начислить кредиты {success_html}</div>
-    <form method="POST" action="/admin/user/{telegram_id}/credit?{tp}" class="admin-form" style="margin-bottom:24px;">
-        <input type="number" name="amount" placeholder="Кол-во" min="1" max="1000" class="admin-input" required>
-        <button type="submit" class="admin-btn admin-btn-green">🎵 Начислить</button>
-    </form>
+    <div class="section-title">🔧 Действия {success_html}</div>
+    <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 24px;">
+        <form method="POST" action="/admin/user/{telegram_id}/credit?{tp}" class="admin-form">
+            <input type="number" name="amount" placeholder="Кол-во" min="1" max="1000" class="admin-input" required>
+            <button type="submit" class="admin-btn admin-btn-green">🎵 Начислить кредиты</button>
+        </form>
+        <form method="POST" action="/admin/user/{telegram_id}/reset_counter?{tp}" class="admin-form">
+            <span style="color: #6b7280; font-size: 13px;">Сегодня: <b style="color:#a78bfa;">{today_count}/{config.max_generations_per_user_per_day}</b></span>
+            <button type="submit" class="admin-btn" style="background: linear-gradient(135deg, #d97706, #f59e0b);">🔄 Сбросить счётчик</button>
+        </form>
+    </div>
 
     <div class="section-title">🎵 Генерации ({len(data['generations'])})</div>
     <table>
@@ -905,6 +927,32 @@ async def credit_user(request: web.Request):
     raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=credited&amount={amount}")
 
 
+@auth_required
+async def set_daily_limit(request: web.Request):
+    """Change the daily generation limit per user."""
+    tp = token_param(request)
+    data = await request.post()
+    try:
+        new_value = int(data.get("daily_limit", config.max_generations_per_user_per_day))
+        if 1 <= new_value <= 1000:
+            config.max_generations_per_user_per_day = new_value
+            persist_env_var("MAX_GENERATIONS_PER_USER_PER_DAY", str(new_value))
+            logger.info(f"Daily generation limit changed to {new_value} via admin panel")
+    except (ValueError, TypeError):
+        pass
+    raise web.HTTPFound(f"/admin/?{tp}&success=daily_limit_set")
+
+
+@auth_required
+async def reset_daily_counter(request: web.Request):
+    """Reset the daily generation counter for a user by deleting today's generation records status."""
+    tp = token_param(request)
+    telegram_id = int(request.match_info["id"])
+    await db.reset_user_daily_generations(telegram_id)
+    logger.info(f"Admin reset daily generation counter for user {telegram_id}")
+    raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=counter_reset")
+
+
 # ─── App factory ───
 
 def create_admin_app() -> web.Application:
@@ -914,9 +962,11 @@ def create_admin_app() -> web.Application:
     app.router.add_post("/admin/set_model", set_model)
     app.router.add_post("/admin/set_free_credits", set_free_credits)
     app.router.add_post("/admin/set_api_provider", set_api_provider)
+    app.router.add_post("/admin/set_daily_limit", set_daily_limit)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
     app.router.add_post("/admin/user/{id}/credit", credit_user)
+    app.router.add_post("/admin/user/{id}/reset_counter", reset_daily_counter)
     app.router.add_get("/admin/generations", generations_list)
     app.router.add_get("/admin/payments", payments_list)
     return app

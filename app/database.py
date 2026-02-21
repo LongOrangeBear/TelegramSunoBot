@@ -287,6 +287,18 @@ async def count_generations_last_hour() -> int:
         return row["cnt"]
 
 
+async def reset_user_daily_generations(user_id: int):
+    """Reset the daily generation counter by moving today's timestamps to yesterday."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE generations
+               SET created_at = created_at - INTERVAL '1 day'
+               WHERE user_id = $1 AND created_at >= CURRENT_DATE""",
+            user_id,
+        )
+
+
+
 # ─── Payment operations ───
 
 async def create_payment(user_id: int, tg_payment_id: str, stars: int, credits: int) -> int:
