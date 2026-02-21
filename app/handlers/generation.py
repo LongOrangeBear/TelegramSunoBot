@@ -11,14 +11,14 @@ from aiogram.fsm.context import FSMContext
 from app import database as db
 from app.config import config
 from app.keyboards import (
-    gender_kb, style_kb, result_kb,
-    back_menu_kb, main_menu_kb,
+    mode_kb, gender_kb, style_kb, result_kb,
+    main_reply_kb,
 )
 from app.states import GenerationStates
 from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
 from app.texts import (
-    CHOOSE_GENDER, CHOOSE_STYLE,
-    ENTER_PROMPT, ENTER_CUSTOM_STYLE,
+    CHOOSE_MODE, CHOOSE_GENDER, CHOOSE_STYLE,
+    ENTER_PROMPT, ENTER_LYRICS, ENTER_CUSTOM_STYLE,
     GENERATING, GENERATING_MUSIC, GENERATION_COMPLETE, GENERATION_ERROR,
     CONTENT_VIOLATION, NO_CREDITS, BLOCKED,
     RATE_LIMIT_USER, RATE_LIMIT_GLOBAL,
@@ -40,12 +40,10 @@ async def check_limits(user_id: int) -> str | None:
     if user["is_blocked"]:
         return BLOCKED
 
-    # Check daily user limit
     today_count = await db.count_user_generations_today(user_id)
     if today_count >= config.max_generations_per_user_per_day:
         return RATE_LIMIT_USER.format(limit=config.max_generations_per_user_per_day)
 
-    # Check hourly global limit
     hour_count = await db.count_generations_last_hour()
     if hour_count >= config.max_generations_per_hour:
         return RATE_LIMIT_GLOBAL
@@ -58,7 +56,6 @@ async def check_credits(user_id: int) -> tuple[bool, dict]:
     from datetime import datetime, timedelta
     user = await db.get_user(user_id)
 
-    # Account age check for free credits
     has_free = user["free_generations_left"] > 0
     if has_free and config.min_account_age_hours > 0:
         account_age = datetime.now() - user["created_at"]
@@ -66,7 +63,6 @@ async def check_credits(user_id: int) -> tuple[bool, dict]:
         if account_age < min_age:
             has_free = False
 
-    # Telegram account age check (higher ID = newer account)
     if has_free and config.min_telegram_user_id > 0:
         if user_id > config.min_telegram_user_id:
             has_free = False
@@ -78,21 +74,17 @@ async def check_credits(user_id: int) -> tuple[bool, dict]:
 # ─── Start creation flow ───
 
 async def start_creation(message_or_cb, state: FSMContext):
-    """Entry point for creation flow — goes directly to gender selection."""
-    user_id = (
-        message_or_cb.from_user.id
-        if isinstance(message_or_cb, (Message, CallbackQuery))
-        else message_or_cb.from_user.id
-    )
+    """Entry point for creation flow — shows mode selection (idea / lyrics)."""
+    user_id = message_or_cb.from_user.id
 
     # Rate limits
     error = await check_limits(user_id)
     if error:
         if isinstance(message_or_cb, CallbackQuery):
-            await message_or_cb.message.edit_text(error, parse_mode="HTML", reply_markup=back_menu_kb())
+            await message_or_cb.message.answer(error, parse_mode="HTML")
             await message_or_cb.answer()
         else:
-            await message_or_cb.answer(error, parse_mode="HTML", reply_markup=back_menu_kb())
+            await message_or_cb.answer(error, parse_mode="HTML")
         return
 
     # Credits check
@@ -101,25 +93,53 @@ async def start_creation(message_or_cb, state: FSMContext):
         total = user["credits"] + user["free_generations_left"]
         text = NO_CREDITS.format(credits=total)
         if isinstance(message_or_cb, CallbackQuery):
-            from app.handlers.payments import show_buy_menu_edit
-            await show_buy_menu_edit(message_or_cb, extra_text=text)
+            await message_or_cb.message.answer(text, parse_mode="HTML")
+            await message_or_cb.answer()
         else:
-            await message_or_cb.answer(text, parse_mode="HTML", reply_markup=back_menu_kb())
+            await message_or_cb.answer(text, parse_mode="HTML")
         return
 
-    # Skip mode selection — go directly to gender
-    await state.update_data(mode="description")
-    await state.set_state(GenerationStates.choosing_gender)
+    # Show mode selection (idea / lyrics)
+    await state.set_state(GenerationStates.choosing_mode)
     if isinstance(message_or_cb, CallbackQuery):
-        await message_or_cb.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
+        await message_or_cb.message.answer(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
         await message_or_cb.answer()
     else:
-        await message_or_cb.answer(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
+        await message_or_cb.answer(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
 
 
 @router.callback_query(F.data == "create")
 async def cb_create(callback: CallbackQuery, state: FSMContext):
     await start_creation(callback, state)
+
+
+# ─── Mode selection (idea / lyrics) ───
+
+@router.callback_query(F.data.startswith("mode:"))
+async def cb_mode(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data.split(":")[1]
+
+    if mode == "lyrics":
+        # Lyrics mode — go directly to entering lyrics
+        await state.update_data(mode="lyrics")
+        await state.set_state(GenerationStates.entering_prompt)
+        await callback.message.edit_text(ENTER_LYRICS, parse_mode="HTML")
+        await callback.answer()
+        return
+
+    # Idea mode — go to gender selection
+    await state.update_data(mode="description")
+    await state.set_state(GenerationStates.choosing_gender)
+    await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_mode")
+async def cb_back_mode(callback: CallbackQuery, state: FSMContext):
+    """Back to mode selection."""
+    await state.set_state(GenerationStates.choosing_mode)
+    await callback.message.edit_text(CHOOSE_MODE, parse_mode="HTML", reply_markup=mode_kb())
+    await callback.answer()
 
 
 # ─── Gender selection ───
@@ -148,13 +168,13 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
 
     if style == "custom_style":
         await state.set_state(GenerationStates.entering_custom_style)
-        await callback.message.edit_text(ENTER_CUSTOM_STYLE, parse_mode="HTML", reply_markup=back_menu_kb())
+        await callback.message.edit_text(ENTER_CUSTOM_STYLE, parse_mode="HTML")
         await callback.answer()
         return
 
     await state.update_data(style=style)
     await state.set_state(GenerationStates.entering_prompt)
-    await callback.message.edit_text(ENTER_PROMPT, parse_mode="HTML", reply_markup=back_menu_kb())
+    await callback.message.edit_text(ENTER_PROMPT, parse_mode="HTML")
     await callback.answer()
 
 
@@ -162,7 +182,7 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
 async def on_custom_style(message: Message, state: FSMContext):
     await state.update_data(style=message.text.strip())
     await state.set_state(GenerationStates.entering_prompt)
-    await message.answer(ENTER_PROMPT, parse_mode="HTML", reply_markup=back_menu_kb())
+    await message.answer(ENTER_PROMPT, parse_mode="HTML")
 
 
 # ─── Text input ───
@@ -190,7 +210,6 @@ async def do_generate(message: Message, state: FSMContext):
         await message.answer(
             NO_CREDITS.format(credits=user["credits"]),
             parse_mode="HTML",
-            reply_markup=back_menu_kb(),
         )
         await state.clear()
         return
@@ -198,7 +217,6 @@ async def do_generate(message: Message, state: FSMContext):
     await state.set_state(GenerationStates.generating)
     status_msg = await message.answer(GENERATING, parse_mode="HTML")
 
-    # Create DB record
     gen_id = await db.create_generation(
         user_id=user_id,
         prompt=prompt,
@@ -210,14 +228,12 @@ async def do_generate(message: Message, state: FSMContext):
     try:
         client = get_suno_client()
 
-        # Create callback for live status updates
         async def on_lyrics_ready(lyrics_text, lyrics_title):
             try:
                 await status_msg.edit_text(GENERATING_MUSIC, parse_mode="HTML")
             except Exception:
                 pass
 
-        # Call Suno v1 API (two-step: lyrics → music in description mode)
         result = await client.generate(
             prompt=prompt,
             style=style,
@@ -230,7 +246,6 @@ async def do_generate(message: Message, state: FSMContext):
         task_id = result["task_id"]
         await db.update_generation_status(gen_id, "processing", suno_song_ids=[task_id])
 
-        # If callback is configured, store chat info and return (result will arrive via callback)
         if config.callback_base_url:
             await db.update_generation_callback_info(
                 gen_id, message.chat.id, status_msg.message_id
@@ -239,16 +254,13 @@ async def do_generate(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        # Fallback: polling for completion
         songs = await client.wait_for_completion(task_id)
 
-        # Extract audio URLs from sunoData (camelCase keys)
         audio_urls = []
         for s in songs:
             url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
 
-        # Deduct credit
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
         else:
@@ -261,7 +273,6 @@ async def do_generate(message: Message, state: FSMContext):
             credits_spent=1,
         )
 
-        # Send voice previews
         tg_file_ids = []
         for i, url in enumerate(audio_urls[:2]):
             if url:
@@ -278,7 +289,6 @@ async def do_generate(message: Message, state: FSMContext):
 
         await db.update_generation_status(gen_id, "complete", tg_file_ids=tg_file_ids)
 
-        # Send result keyboard
         await status_msg.edit_text(
             GENERATION_COMPLETE,
             parse_mode="HTML",
@@ -291,18 +301,17 @@ async def do_generate(message: Message, state: FSMContext):
         await status_msg.edit_text(
             CONTENT_VIOLATION.format(count=count),
             parse_mode="HTML",
-            reply_markup=back_menu_kb(),
         )
 
     except SunoApiError as e:
         logger.error(f"Suno API error for gen {gen_id}: {e}")
         await db.update_generation_status(gen_id, "error", error_message=str(e))
-        await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML", reply_markup=back_menu_kb())
+        await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
 
     except Exception as e:
         logger.error(f"Unexpected error for gen {gen_id}: {e}", exc_info=True)
         await db.update_generation_status(gen_id, "error", error_message=str(e))
-        await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML", reply_markup=back_menu_kb())
+        await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
 
     finally:
         await state.clear()
@@ -326,7 +335,6 @@ async def cb_rate(callback: CallbackQuery):
         await callback.answer("Генерация не найдена", show_alert=True)
         return
 
-    # Verify it's the owner
     if gen["user_id"] != callback.from_user.id:
         await callback.answer("Это не ваша генерация", show_alert=True)
         return
@@ -375,10 +383,9 @@ async def cb_download(callback: CallbackQuery):
         await callback.answer("Используйте /start", show_alert=True)
         return
 
-    # Check credits for download
     if user["credits"] <= 0 and user["free_generations_left"] <= 0:
         await callback.answer(
-            f"🎵 Для скачивания нужна 1 песня. Баланс: {user['credits']}🎵",
+            f"🎵 Для скачивания нужен 1 балл. Баланс: {user['credits']}",
             show_alert=True,
         )
         return
@@ -393,14 +400,12 @@ async def cb_download(callback: CallbackQuery):
         await callback.answer("Трек недоступен", show_alert=True)
         return
 
-    # Deduct credit
     if user["free_generations_left"] > 0:
         await db.use_free_generation(callback.from_user.id)
     else:
         await db.update_user_credits(callback.from_user.id, -1)
 
     try:
-        # Download and send as audio file
         async with httpx.AsyncClient() as http:
             resp = await http.get(urls[idx], timeout=60.0)
             resp.raise_for_status()
@@ -420,7 +425,6 @@ async def cb_download(callback: CallbackQuery):
         await callback.answer("✅ Скачано!")
     except Exception as e:
         logger.error(f"Download error: {e}")
-        # Refund credit on error
         await db.update_user_credits(callback.from_user.id, 1)
         await callback.answer("Ошибка скачивания. Кредит возвращён.", show_alert=True)
 
@@ -434,7 +438,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Генерация не найдена", show_alert=True)
         return
 
-    # Set state data from previous generation
     await state.update_data(
         mode=gen["mode"],
         style=gen.get("style", ""),
@@ -442,22 +445,18 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         prompt=gen.get("prompt", ""),
     )
 
-    # Fake message for do_generate (use callback message as proxy)
     await callback.answer("⚡ Запускаю новую генерацию...")
     msg = await callback.message.answer(GENERATING, parse_mode="HTML")
 
-    # Re-run generation
     user_id = callback.from_user.id
     has_credits, user = await check_credits(user_id)
     if not has_credits:
         await msg.edit_text(
             NO_CREDITS.format(credits=user["credits"]),
             parse_mode="HTML",
-            reply_markup=back_menu_kb(),
         )
         return
 
-    # Use the regenerate path
     data = await state.get_data()
     gen_id_new = await db.create_generation(
         user_id=user_id,
@@ -470,7 +469,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
     try:
         client = get_suno_client()
 
-        # Create callback for live status updates
         async def on_lyrics_ready(lyrics_text, lyrics_title):
             try:
                 await msg.edit_text(GENERATING_MUSIC, parse_mode="HTML")
@@ -489,7 +487,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         task_id = result["task_id"]
         await db.update_generation_status(gen_id_new, "processing", suno_song_ids=[task_id])
 
-        # If callback is configured, store chat info and return
         if config.callback_base_url:
             await db.update_generation_callback_info(
                 gen_id_new, callback.message.chat.id, msg.message_id
@@ -498,7 +495,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             await state.clear()
             return
 
-        # Fallback: polling
         songs = await client.wait_for_completion(task_id)
 
         audio_urls = []
@@ -506,7 +502,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
 
-        # Deduct credit
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
         else:
@@ -515,7 +510,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         await db.update_last_generation(user_id)
         await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1)
 
-        # Send voice previews
         for i, url in enumerate(audio_urls[:2]):
             if url:
                 try:
@@ -536,15 +530,14 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         await msg.edit_text(
             CONTENT_VIOLATION.format(count=count),
             parse_mode="HTML",
-            reply_markup=back_menu_kb(),
         )
     except SunoApiError as e:
         logger.error(f"Regen API error: {e}")
         await db.update_generation_status(gen_id_new, "error", error_message=str(e))
-        await msg.edit_text(GENERATION_ERROR, parse_mode="HTML", reply_markup=back_menu_kb())
+        await msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Regen unexpected error: {e}", exc_info=True)
-        await msg.edit_text(GENERATION_ERROR, parse_mode="HTML", reply_markup=back_menu_kb())
+        await msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
     finally:
         await state.clear()
 
@@ -554,7 +547,7 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
 async def show_history(message: Message):
     gens = await db.get_user_generations(message.from_user.id, limit=10)
     if not gens:
-        await message.answer(HISTORY_EMPTY, parse_mode="HTML", reply_markup=back_menu_kb())
+        await message.answer(HISTORY_EMPTY, parse_mode="HTML")
         return
 
     lines = [HISTORY_HEADER]
@@ -566,18 +559,14 @@ async def show_history(message: Message):
         lines.append(f"\n{i}. 🎵 <i>{prompt}</i>{rating}")
         lines.append(f"   📅 {date} | 🎼 {style}")
 
-    await message.answer(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_menu_kb(),
-    )
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "history")
 async def cb_history(callback: CallbackQuery):
     gens = await db.get_user_generations(callback.from_user.id, limit=10)
     if not gens:
-        await callback.message.edit_text(HISTORY_EMPTY, parse_mode="HTML", reply_markup=back_menu_kb())
+        await callback.message.answer(HISTORY_EMPTY, parse_mode="HTML")
         await callback.answer()
         return
 
@@ -590,9 +579,5 @@ async def cb_history(callback: CallbackQuery):
         lines.append(f"\n{i}. 🎵 <i>{prompt}</i>{rating}")
         lines.append(f"   📅 {date} | 🎼 {style}")
 
-    await callback.message.edit_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_menu_kb(),
-    )
+    await callback.message.answer("\n".join(lines), parse_mode="HTML")
     await callback.answer()

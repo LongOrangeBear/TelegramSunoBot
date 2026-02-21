@@ -1,28 +1,52 @@
-"""Inline keyboard builders for the bot."""
+"""Keyboard builders for the bot — Reply keyboard + Inline keyboards."""
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, KeyboardButton,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import config
 
 
-def main_menu_kb(credits: int, free_left: int) -> InlineKeyboardMarkup:
-    total = credits + free_left
+# ─── Button text constants (used for matching in handlers) ───
+
+BTN_CREATE = "🎵 Создать песню"
+BTN_BALANCE = "💰 Баланс"
+BTN_SUPPORT = "🔧 Техническая поддержка"
+BTN_HELP = "❓ Помощь"
+
+
+# ─── Persistent Reply Keyboard (always visible) ───
+
+def main_reply_kb() -> ReplyKeyboardMarkup:
+    """Persistent bottom menu like SoNata bot."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_CREATE)],
+            [KeyboardButton(text=BTN_BALANCE)],
+            [KeyboardButton(text=BTN_SUPPORT)],
+            [KeyboardButton(text=BTN_HELP)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+# ─── Mode selection (Есть идея / Есть стихи) ───
+
+def mode_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🎵 Создать", callback_data="create"),
-        InlineKeyboardButton(text="📚 Мои треки", callback_data="history"),
+        InlineKeyboardButton(text="💡 Есть идея", callback_data="mode:idea"),
     )
     builder.row(
-        InlineKeyboardButton(text=f"💰 Баланс: {total}", callback_data="buy"),
-        InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="📤 Поделиться", callback_data="invite"),
-        InlineKeyboardButton(text="❓ Помощь", callback_data="help"),
+        InlineKeyboardButton(text="📝 Есть стихи", callback_data="mode:lyrics"),
     )
     return builder.as_markup()
 
+
+# ─── Gender selection ───
 
 def gender_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -30,9 +54,11 @@ def gender_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🚹 Мужской", callback_data="gender:male"),
         InlineKeyboardButton(text="🚺 Женский", callback_data="gender:female"),
     )
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_mode"))
     return builder.as_markup()
 
+
+# ─── Style selection ───
 
 STYLES = [
     ("🎸 Рок", "rock"),
@@ -46,24 +72,57 @@ STYLES = [
     ("💔 Баллада", "ballad"),
     ("🪗 Русская народная", "russian folk"),
     ("🎉 Праздничная", "holiday celebration"),
-    ("✏️ Свой стиль", "custom_style"),
 ]
 
 
 def style_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    # All styles except last (custom) in rows of 3
-    regular_styles = [s for s in STYLES if s[1] != "custom_style"]
-    for i in range(0, len(regular_styles), 3):
+    for i in range(0, len(STYLES), 3):
         row = []
-        for label, data in regular_styles[i:i+3]:
+        for label, data in STYLES[i:i+3]:
             row.append(InlineKeyboardButton(text=label, callback_data=f"style:{data}"))
         builder.row(*row)
-    # Custom style button
     builder.row(InlineKeyboardButton(text="✏️ Свой стиль", callback_data="style:custom_style"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_gender"))
     return builder.as_markup()
 
+
+# ─── Balance / Buy page ───
+
+def balance_kb() -> InlineKeyboardMarkup:
+    """Balance page with tariffs, Telegram Stars, and referral."""
+    builder = InlineKeyboardBuilder()
+    for pkg in config.credit_packages:
+        builder.row(
+            InlineKeyboardButton(
+                text=pkg["label"],
+                callback_data=f"buy_credits:{pkg['credits']}:{pkg['stars']}",
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(text="⭐ Оплата Telegram Stars", callback_data="buy_stars"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔗 Реферальная программа", callback_data="invite"),
+    )
+    return builder.as_markup()
+
+
+def stars_kb() -> InlineKeyboardMarkup:
+    """Telegram Stars payment options."""
+    builder = InlineKeyboardBuilder()
+    for pkg in config.credit_packages:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{pkg['stars']}⭐ — {pkg['credits']} баллов",
+                callback_data=f"buy_credits:{pkg['credits']}:{pkg['stars']}",
+            )
+        )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_balance"))
+    return builder.as_markup()
+
+
+# ─── Result keyboard ───
 
 def result_kb(gen_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -78,11 +137,10 @@ def result_kb(gen_id: int) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="🔄 Ещё варианты (−1🎵)", callback_data=f"regenerate:{gen_id}"),
     )
-    # Rating: "Оцените песню:" label + 5 stars (left empty, right filled)
+    # Rating
     builder.row(
         InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
     )
-    # Stars: ☆ | ☆⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐
     star_labels = ["☆", "☆⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
     rating_row = []
     for i, label in enumerate(star_labels, 1):
@@ -91,7 +149,7 @@ def result_kb(gen_id: int) -> InlineKeyboardMarkup:
         )
     builder.row(*rating_row)
     builder.row(
-        InlineKeyboardButton(text="🏠 Меню", callback_data="back_menu"),
+        InlineKeyboardButton(text="🎵 Создать ещё", callback_data="create"),
     )
     return builder.as_markup()
 
@@ -110,22 +168,3 @@ def rating_kb(gen_id: int) -> InlineKeyboardMarkup:
         )
     builder.row(*rating_row)
     return builder.as_markup()
-
-
-def buy_kb() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for pkg in config.credit_packages:
-        builder.row(
-            InlineKeyboardButton(
-                text=pkg["label"],
-                callback_data=f"buy_credits:{pkg['credits']}:{pkg['stars']}",
-            )
-        )
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_menu"))
-    return builder.as_markup()
-
-
-def back_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 Меню", callback_data="back_menu")]
-    ])

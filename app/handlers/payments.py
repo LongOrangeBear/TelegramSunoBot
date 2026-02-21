@@ -10,27 +10,11 @@ from aiogram.types import (
 
 from app import database as db
 from app.config import config
-from app.keyboards import buy_kb, back_menu_kb, main_menu_kb
-from app.texts import BUY_HEADER, PAYMENT_SUCCESS, NO_CREDITS
+from app.keyboards import main_reply_kb, balance_kb
+from app.texts import PAYMENT_SUCCESS, NO_CREDITS
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-
-async def show_buy_menu(message: Message):
-    await message.answer(BUY_HEADER, parse_mode="HTML", reply_markup=buy_kb())
-
-
-async def show_buy_menu_edit(callback: CallbackQuery, extra_text: str = ""):
-    text = extra_text + "\n\n" + BUY_HEADER if extra_text else BUY_HEADER
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=buy_kb())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "buy")
-async def cb_buy(callback: CallbackQuery):
-    await callback.message.edit_text(BUY_HEADER, parse_mode="HTML", reply_markup=buy_kb())
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("buy_credits:"))
@@ -40,7 +24,6 @@ async def cb_buy_credits(callback: CallbackQuery):
     credits = int(parts[1])
     stars = int(parts[2])
 
-    # Find matching package
     pkg = next(
         (p for p in config.credit_packages if p["credits"] == credits),
         None,
@@ -51,11 +34,11 @@ async def cb_buy_credits(callback: CallbackQuery):
 
     try:
         await callback.message.answer_invoice(
-            title=f"🎵 {credits} песен",
-            description=f"Покупка {credits} песен для генерации музыки",
+            title=f"⭐ Начисление {credits} баллов",
+            description=f"⭐ Начисление {credits} баллов — ⭐ {stars}",
             payload=f"credits_{credits}_{stars}",
             currency="XTR",
-            prices=[LabeledPrice(label=f"{credits} песен", amount=stars)],
+            prices=[LabeledPrice(label=f"{credits} баллов", amount=stars)],
         )
         await callback.answer()
     except Exception as e:
@@ -79,7 +62,6 @@ async def on_successful_payment(message: Message):
     credits = int(parts[1])
     stars = int(parts[2])
 
-    # Record payment and add credits
     await db.create_payment(
         user_id=message.from_user.id,
         tg_payment_id=payment.telegram_payment_charge_id,
@@ -91,9 +73,9 @@ async def on_successful_payment(message: Message):
     balance = user["credits"] + user["free_generations_left"]
 
     await message.answer(
-        PAYMENT_SUCCESS.format(credits=credits, balance=balance),
+        PAYMENT_SUCCESS.format(credits=credits, stars=stars, balance=balance),
         parse_mode="HTML",
-        reply_markup=main_menu_kb(user["credits"], user["free_generations_left"]),
+        reply_markup=main_reply_kb(),
     )
     logger.info(
         f"Payment: user={message.from_user.id} credits={credits} stars={stars} "

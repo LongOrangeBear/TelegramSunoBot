@@ -6,7 +6,7 @@ import logging
 from aiohttp import web
 
 from app import database as db
-from app.keyboards import result_kb, back_menu_kb
+from app.keyboards import result_kb
 from app.texts import GENERATION_COMPLETE, GENERATION_ERROR
 
 logger = logging.getLogger(__name__)
@@ -181,7 +181,6 @@ async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
                 message_id=status_msg_id,
                 text=GENERATION_ERROR,
                 parse_mode="HTML",
-                reply_markup=back_menu_kb(),
             )
         except Exception as e:
             logger.error(f"Callback: failed to edit error msg: {e}")
