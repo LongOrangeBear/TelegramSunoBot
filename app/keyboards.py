@@ -129,7 +129,7 @@ def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
     )
     # Rating row
-    star_labels = ["☆", "☆⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
+    star_labels = ["1 ⭐", "2 ⭐", "3 ⭐", "4 ⭐", "5 ⭐"]
     rating_row = []
     for i, label in enumerate(star_labels, 1):
         rating_row.append(
@@ -157,7 +157,7 @@ def rating_kb(gen_id: int) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
     )
-    star_labels = ["☆", "☆⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
+    star_labels = ["1 ⭐", "2 ⭐", "3 ⭐", "4 ⭐", "5 ⭐"]
     rating_row = []
     for i, label in enumerate(star_labels, 1):
         rating_row.append(
