@@ -78,12 +78,17 @@ class SunoClient:
                 "model": config.suno_model,
             }
         else:
-            # Description mode: customMode=false
+            # Description mode: customMode=true, instrumental=false
+            # prompt = user's description (up to 5000 chars for V5)
+            # style = genre + vocal type (up to 1000 chars for V5)
+            auto_title = prompt[:100] if len(prompt) <= 100 else prompt[:97] + "..."
             payload = {
-                "prompt": f"{prompt}, style: {full_style}" if full_style else prompt,
-                "customMode": False,
+                "customMode": True,
                 "instrumental": False,
                 "model": config.suno_model,
+                "prompt": prompt[:5000],
+                "style": full_style[:1000] if full_style else "Pop",
+                "title": auto_title,
             }
 
         # Add callback URL if configured
