@@ -65,10 +65,10 @@ class Config:
             raise ValueError("BOT_TOKEN is required")
         self.apply_provider(self.api_provider)
         self.credit_packages = [
-            {"credits": 5, "stars": 50, "label": "5💎 — ⭐50"},
-            {"credits": 15, "stars": 130, "label": "15💎 — ⭐130"},
-            {"credits": 50, "stars": 400, "label": "50💎 — ⭐400"},
-            {"credits": 100, "stars": 750, "label": "100💎 — ⭐750"},
+            {"credits": 5, "stars": 50, "label": "5🎵 — ⭐50"},
+            {"credits": 15, "stars": 130, "label": "15🎵 — ⭐130"},
+            {"credits": 50, "stars": 400, "label": "50🎵 — ⭐400"},
+            {"credits": 100, "stars": 750, "label": "100🎵 — ⭐750"},
         ]
 
     def apply_provider(self, provider: str):

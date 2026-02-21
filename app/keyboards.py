@@ -14,11 +14,11 @@ def main_menu_kb(credits: int, free_left: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📚 Мои треки", callback_data="history"),
     )
     builder.row(
-        InlineKeyboardButton(text=f"💰 Кредиты: {total}💎", callback_data="buy"),
+        InlineKeyboardButton(text=f"🎵 Песни: {total}", callback_data="buy"),
         InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
     )
     builder.row(
-        InlineKeyboardButton(text="📤 Поделиться ботом", callback_data="invite"),
+        InlineKeyboardButton(text="📤 Поделиться", callback_data="invite"),
         InlineKeyboardButton(text="❓ Помощь", callback_data="help"),
     )
     return builder.as_markup()
@@ -72,21 +72,24 @@ def result_kb(gen_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔊 Вариант 2", callback_data=f"listen:{gen_id}:1"),
     )
     builder.row(
-        InlineKeyboardButton(text="📥 Скачать #1 (−1💎)", callback_data=f"download:{gen_id}:0"),
-        InlineKeyboardButton(text="📥 Скачать #2 (−1💎)", callback_data=f"download:{gen_id}:1"),
+        InlineKeyboardButton(text="📥 Скачать #1 (−1🎵)", callback_data=f"download:{gen_id}:0"),
+        InlineKeyboardButton(text="📥 Скачать #2 (−1🎵)", callback_data=f"download:{gen_id}:1"),
     )
     builder.row(
-        InlineKeyboardButton(text="🔄 Ещё варианты (−1💎)", callback_data=f"regenerate:{gen_id}"),
+        InlineKeyboardButton(text="🔄 Ещё варианты (−1🎵)", callback_data=f"regenerate:{gen_id}"),
     )
-    # Rating bar (10 stars)
+    # Rating: "Оцените песню:" label + 5 stars (left empty, right filled)
+    builder.row(
+        InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
+    )
+    # Stars: ☆ | ☆⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐
+    star_labels = ["☆", "☆⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
     rating_row = []
-    for i in range(1, 11):
+    for i, label in enumerate(star_labels, 1):
         rating_row.append(
-            InlineKeyboardButton(text=f"{'⭐' if i <= 5 else '⭐'}", callback_data=f"rate:{gen_id}:{i}")
+            InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
         )
-    # Split into 2 rows of 5
-    builder.row(*rating_row[:5])
-    builder.row(*rating_row[5:])
+    builder.row(*rating_row)
     builder.row(
         InlineKeyboardButton(text="🏠 Меню", callback_data="back_menu"),
     )
@@ -94,12 +97,18 @@ def result_kb(gen_id: int) -> InlineKeyboardMarkup:
 
 
 def rating_kb(gen_id: int) -> InlineKeyboardMarkup:
-    """Standalone rating keyboard with numbered stars."""
+    """Standalone rating keyboard with 5 stars."""
     builder = InlineKeyboardBuilder()
-    row1 = [InlineKeyboardButton(text=str(i), callback_data=f"rate:{gen_id}:{i}") for i in range(1, 6)]
-    row2 = [InlineKeyboardButton(text=str(i), callback_data=f"rate:{gen_id}:{i}") for i in range(6, 11)]
-    builder.row(*row1)
-    builder.row(*row2)
+    builder.row(
+        InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
+    )
+    star_labels = ["☆", "☆⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
+    rating_row = []
+    for i, label in enumerate(star_labels, 1):
+        rating_row.append(
+            InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
+        )
+    builder.row(*rating_row)
     return builder.as_markup()
 
 

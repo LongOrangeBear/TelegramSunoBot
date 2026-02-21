@@ -13,7 +13,7 @@ from app.config import config
 from app.keyboards import main_menu_kb, back_menu_kb
 from app.texts import (
     WELCOME, WELCOME_BACK, HELP, PROFILE, BLOCKED,
-    INVITE, REFERRAL_BONUS,
+    INVITE, INVITE_INSTRUCTIONS, REFERRAL_BONUS,
 )
 
 router = Router()
@@ -94,7 +94,7 @@ async def cmd_balance(message: Message):
         return
     total = user["credits"] + user["free_generations_left"]
     await message.answer(
-        f"💎 Ваш баланс: <b>{total} кредитов</b>",
+        f"🎵 Ваш баланс: <b>{total} песен</b>",
         parse_mode="HTML",
         reply_markup=back_menu_kb(),
     )
@@ -142,6 +142,12 @@ async def cb_help(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: CallbackQuery):
+    """No-op handler for label-only buttons."""
+    await callback.answer()
+
+
 @router.callback_query(F.data == "profile")
 async def cb_profile(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
@@ -165,16 +171,21 @@ async def cb_profile(callback: CallbackQuery):
 
 @router.callback_query(F.data == "invite")
 async def cb_invite(callback: CallbackQuery):
-    """Send a shareable message with bot link for forwarding."""
+    """Send instructions + shareable message with bot link for forwarding."""
     bot_me = await callback.bot.get_me()
     bot_link = f"https://t.me/{bot_me.username}?start=ref{callback.from_user.id}"
 
-    text = INVITE.format(bot_link=bot_link)
+    # Send instructions first
+    await callback.message.answer(
+        INVITE_INSTRUCTIONS,
+        parse_mode="HTML",
+    )
 
-    # Send as a new message (so user can forward it)
+    # Then the message to forward
+    text = INVITE.format(bot_link=bot_link)
     await callback.message.answer(
         text,
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-    await callback.answer("📤 Перешлите это сообщение друзьям!")
+    await callback.answer("📤 Перешлите сообщение ниже друзьям!")

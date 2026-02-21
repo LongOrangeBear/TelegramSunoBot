@@ -309,7 +309,7 @@ async def cb_rate(callback: CallbackQuery):
     gen_id = int(parts[1])
     rating = int(parts[2])
 
-    if rating < 1 or rating > 10:
+    if rating < 1 or rating > 5:
         await callback.answer("Некорректная оценка", show_alert=True)
         return
 
@@ -324,7 +324,7 @@ async def cb_rate(callback: CallbackQuery):
         return
 
     await db.update_generation_rating(gen_id, rating)
-    await callback.answer(f"⭐ Оценка {rating}/10 сохранена!")
+    await callback.answer(f"⭐ Оценка {rating}/5 сохранена!")
 
 
 # ─── Result actions ───
@@ -370,7 +370,7 @@ async def cb_download(callback: CallbackQuery):
     # Check credits for download
     if user["credits"] <= 0 and user["free_generations_left"] <= 0:
         await callback.answer(
-            f"💎 Для скачивания нужен 1 кредит. Баланс: {user['credits']}💎",
+            f"🎵 Для скачивания нужна 1 песня. Баланс: {user['credits']}🎵",
             show_alert=True,
         )
         return

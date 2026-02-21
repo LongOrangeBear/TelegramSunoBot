@@ -51,11 +51,11 @@ async def cb_buy_credits(callback: CallbackQuery):
 
     try:
         await callback.message.answer_invoice(
-            title=f"{credits}💎 кредитов",
-            description=f"Покупка {credits} кредитов для генерации музыки",
+            title=f"🎵 {credits} песен",
+            description=f"Покупка {credits} песен для генерации музыки",
             payload=f"credits_{credits}_{stars}",
             currency="XTR",
-            prices=[LabeledPrice(label=f"{credits} кредитов", amount=stars)],
+            prices=[LabeledPrice(label=f"{credits} песен", amount=stars)],
         )
         await callback.answer()
     except Exception as e:

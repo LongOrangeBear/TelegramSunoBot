@@ -395,7 +395,7 @@ async def dashboard(request: web.Request):
             <div class="label">Stars получено (из БД)</div>
         </div>
         <div class="stat-card">
-            <div class="value">{stats['total_credits_sold']}💎</div>
+            <div class="value">{stats['total_credits_sold']}🎵</div>
             <div class="label">Кредитов продано</div>
         </div>
         <div class="stat-card">
@@ -489,7 +489,7 @@ async def users_list(request: web.Request):
             <td><a class="link" href="/admin/user/{u['telegram_id']}?{tp}">{u['telegram_id']}</a></td>
             <td>{u.get('username') or '—'}</td>
             <td>{u.get('first_name') or '—'}</td>
-            <td>{total_credits}💎 {blocked}</td>
+            <td>{total_credits}🎵 {blocked}</td>
             <td>{u['gen_count']}</td>
             <td>⭐{u['total_stars']}</td>
             <td>{ref_badge}</td>
@@ -551,7 +551,7 @@ async def user_detail(request: web.Request):
     success_html = ""
     if success == "credited":
         amount = request.query.get("amount", "")
-        success_html = f'<span class="success-msg">✅ Начислено {amount}💎</span>'
+        success_html = f'<span class="success-msg">✅ Начислено {amount}🎵</span>'
 
     gen_rows = ""
     for g in data["generations"]:
@@ -570,7 +570,7 @@ async def user_detail(request: web.Request):
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span></td>
             <td>{rating_display}</td>
-            <td>{g.get('credits_spent', 0)}💎</td>
+            <td>{g.get('credits_spent', 0)}🎵</td>
             <td>{fmt_date(g['created_at'])}</td>
         </tr>"""
 
@@ -579,7 +579,7 @@ async def user_detail(request: web.Request):
         pay_rows += f"""<tr>
             <td>{p['id']}</td>
             <td>⭐{p['stars_amount']}</td>
-            <td>{p['credits_purchased']}💎</td>
+            <td>{p['credits_purchased']}🎵</td>
             <td><span class="badge badge-ok">{p['status']}</span></td>
             <td><code>{p.get('tg_payment_id', '—')}</code></td>
             <td>{fmt_date(p['created_at'])}</td>
@@ -595,11 +595,11 @@ async def user_detail(request: web.Request):
 
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="value">{total_credits}💎</div>
+            <div class="value">{total_credits}🎵</div>
             <div class="label">Баланс</div>
         </div>
         <div class="stat-card">
-            <div class="value">{user['credits']}💎</div>
+            <div class="value">{user['credits']}🎵</div>
             <div class="label">Оплаченные</div>
         </div>
         <div class="stat-card">
@@ -616,10 +616,10 @@ async def user_detail(request: web.Request):
         </div>
     </div>
 
-    <div class="section-title">💎 Начислить кредиты {success_html}</div>
+    <div class="section-title">🎵 Начислить кредиты {success_html}</div>
     <form method="POST" action="/admin/user/{telegram_id}/credit?{tp}" class="admin-form" style="margin-bottom:24px;">
         <input type="number" name="amount" placeholder="Кол-во" min="1" max="1000" class="admin-input" required>
-        <button type="submit" class="admin-btn admin-btn-green">💎 Начислить</button>
+        <button type="submit" class="admin-btn admin-btn-green">🎵 Начислить</button>
     </form>
 
     <div class="section-title">🎵 Генерации ({len(data['generations'])})</div>
@@ -693,7 +693,7 @@ async def generations_list(request: web.Request):
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span></td>
             <td>{rating_display}</td>
-            <td>{g.get('credits_spent', 0)}💎</td>
+            <td>{g.get('credits_spent', 0)}🎵</td>
             <td>{fmt_date(g['created_at'])}</td>
         </tr>"""
 
@@ -748,7 +748,7 @@ async def payments_list(request: web.Request):
             <td>{p['id']}</td>
             <td><a class="link" href="/admin/user/{p['user_id']}?{tp}">{user_label}</a></td>
             <td>⭐{p['stars_amount']}</td>
-            <td>{p['credits_purchased']}💎</td>
+            <td>{p['credits_purchased']}🎵</td>
             <td><span class="badge badge-ok">{p['status']}</span></td>
             <td><code>{p.get('tg_payment_id', '—')}</code></td>
             <td>{fmt_date(p['created_at'])}</td>
