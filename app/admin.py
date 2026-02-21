@@ -401,6 +401,9 @@ async def dashboard(request: web.Request):
         success_html = f'<span class="success-msg">✅ Модель изменена на {config.suno_model}</span>'
     elif success == "daily_limit_set":
         success_html = f'<span class="success-msg">✅ Лимит изменён на {config.max_generations_per_user_per_day}/день</span>'
+    elif success == "russian_prefix":
+        status = "включен" if config.russian_language_prefix else "выключен"
+        success_html = f'<span class="success-msg">✅ Префикс русского языка {status}</span>'
 
     content = f"""
     <h1>📊 Дашборд</h1>
@@ -489,6 +492,16 @@ async def dashboard(request: web.Request):
                 <td>Максимум генераций в день на одного пользователя</td>
             </tr>
             <tr><td>📊 Лимит/час глобальный</td><td>{config.max_generations_per_hour}</td><td>Максимум генераций в час по всему боту (защита от перегрузки API)</td></tr>
+            <tr>
+                <td>🇷🇺 Песня на русском</td>
+                <td>
+                    <form method="POST" action="/admin/toggle_russian_prefix?{tp}" class="admin-form">
+                        <span class="badge {'badge-ok' if config.russian_language_prefix else 'badge-warn'}">{'ВКЛ' if config.russian_language_prefix else 'ВЫКЛ'}</span>
+                        <button type="submit" class="admin-btn">{"Выключить" if config.russian_language_prefix else "Включить"}</button>
+                    </form>
+                </td>
+                <td>Добавляет "песня на русском языке" в начало описания для Suno API</td>
+            </tr>
         </tbody>
     </table>
 
@@ -918,6 +931,17 @@ async def reset_daily_counter(request: web.Request):
     raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=counter_reset")
 
 
+@auth_required
+async def toggle_russian_prefix(request: web.Request):
+    """Toggle the Russian language prefix for Suno prompts."""
+    tp = token_param(request)
+    new_value = not config.russian_language_prefix
+    config.russian_language_prefix = new_value
+    persist_env_var("RUSSIAN_LANGUAGE_PREFIX", "1" if new_value else "0")
+    logger.info(f"Admin toggled russian_language_prefix to {new_value}")
+    raise web.HTTPFound(f"/admin/?{tp}&success=russian_prefix")
+
+
 # ─── App factory ───
 
 def create_admin_app() -> web.Application:
@@ -927,6 +951,7 @@ def create_admin_app() -> web.Application:
     app.router.add_post("/admin/set_model", set_model)
     app.router.add_post("/admin/set_free_credits", set_free_credits)
     app.router.add_post("/admin/set_daily_limit", set_daily_limit)
+    app.router.add_post("/admin/toggle_russian_prefix", toggle_russian_prefix)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
     app.router.add_post("/admin/user/{id}/credit", credit_user)

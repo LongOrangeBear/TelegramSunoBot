@@ -20,13 +20,11 @@ BTN_HELP = "❓ Помощь"
 # ─── Persistent Reply Keyboard (always visible) ───
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
-    """Persistent bottom menu like SoNata bot."""
+    """Persistent bottom menu — 2x2 layout."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_CREATE)],
-            [KeyboardButton(text=BTN_BALANCE)],
-            [KeyboardButton(text=BTN_SUPPORT)],
-            [KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_CREATE), KeyboardButton(text=BTN_BALANCE)],
+            [KeyboardButton(text=BTN_SUPPORT), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -124,23 +122,13 @@ def stars_kb() -> InlineKeyboardMarkup:
 
 # ─── Result keyboard ───
 
-def result_kb(gen_id: int) -> InlineKeyboardMarkup:
+def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
+    """Per-track inline keyboard: share + rate."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🔊 Вариант 1", callback_data=f"listen:{gen_id}:0"),
-        InlineKeyboardButton(text="🔊 Вариант 2", callback_data=f"listen:{gen_id}:1"),
+        InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
     )
-    builder.row(
-        InlineKeyboardButton(text="📥 Скачать #1 (−1🎵)", callback_data=f"download:{gen_id}:0"),
-        InlineKeyboardButton(text="📥 Скачать #2 (−1🎵)", callback_data=f"download:{gen_id}:1"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="🔄 Ещё варианты (−1🎵)", callback_data=f"regenerate:{gen_id}"),
-    )
-    # Rating
-    builder.row(
-        InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
-    )
+    # Rating row
     star_labels = ["☆", "☆⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
     rating_row = []
     for i, label in enumerate(star_labels, 1):
@@ -148,8 +136,17 @@ def result_kb(gen_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
         )
     builder.row(*rating_row)
+    return builder.as_markup()
+
+
+def after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
+    """Keyboard shown after all tracks: regenerate + create another."""
+    builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🎵 Создать ещё", callback_data="create"),
+        InlineKeyboardButton(text="🔄 Ещё варианты (−1🎵)", callback_data=f"regenerate:{gen_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="🎵 Создать другую", callback_data="create"),
     )
     return builder.as_markup()
 

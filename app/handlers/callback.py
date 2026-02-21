@@ -3,10 +3,11 @@
 import asyncio
 import logging
 
+import httpx
 from aiohttp import web
 
 from app import database as db
-from app.keyboards import result_kb
+from app.keyboards import track_kb, after_generation_kb
 from app.texts import GENERATION_COMPLETE, GENERATION_ERROR
 
 logger = logging.getLogger(__name__)
@@ -79,13 +80,17 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
     bot = get_bot() if get_bot else None
 
     if code == 200 and callback_type == "complete":
-        # Success — extract audio URLs
+        # Success — extract audio URLs, image URLs, titles
         suno_data = data.get("data", [])
 
         audio_urls = []
+        image_urls = []
+        song_titles = []
         for s in suno_data:
             url = s.get("audio_url") or s.get("stream_audio_url", "")
             audio_urls.append(url)
+            image_urls.append(s.get("image_url", ""))
+            song_titles.append(s.get("title", "AI Melody Track"))
 
         if not audio_urls:
             logger.warning(f"Callback: no audio URLs in data for task_id={task_id}")
@@ -109,7 +114,7 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
         # Send result to user via bot asynchronously (don't block the 200 response)
         if bot and gen.get("callback_chat_id"):
             asyncio.create_task(
-                _deliver_result_to_user(bot, gen, gen_id, audio_urls)
+                _deliver_result_to_user(bot, gen, gen_id, audio_urls, image_urls, song_titles)
             )
 
         logger.info(f"Callback: generation {gen_id} completed with {len(audio_urls)} tracks")
@@ -132,39 +137,72 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-async def _deliver_result_to_user(bot, gen: dict, gen_id: int, audio_urls: list[str]):
-    """Send generation results to the user in Telegram (runs as background task)."""
+async def _deliver_result_to_user(
+    bot, gen: dict, gen_id: int,
+    audio_urls: list[str], image_urls: list[str], song_titles: list[str],
+):
+    """Send generation results to the user in Telegram — SoNata-style (runs as background task)."""
     chat_id = gen["callback_chat_id"]
     status_msg_id = gen.get("callback_message_id")
 
     try:
-        from aiogram.types import URLInputFile
+        from aiogram.types import BufferedInputFile
 
-        # Send voice previews
-        for i, url in enumerate(audio_urls[:2]):
-            if url:
-                try:
-                    voice = URLInputFile(url, filename=f"preview_{i+1}.ogg")
-                    await bot.send_voice(
-                        chat_id=chat_id,
-                        voice=voice,
-                        caption=f"🔊 Вариант {i+1}",
-                    )
-                except Exception as e:
-                    logger.error(f"Callback: failed to send voice {i}: {e}")
-
-        # Update status message
+        # Delete status message
         if status_msg_id:
             try:
-                await bot.edit_message_text(
+                await bot.delete_message(chat_id=chat_id, message_id=status_msg_id)
+            except Exception:
+                pass
+
+        # SoNata-style delivery: per track — image, then audio with buttons
+        for i, url in enumerate(audio_urls[:2]):
+            if not url:
+                continue
+            try:
+                img_url = image_urls[i] if i < len(image_urls) else ""
+                title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+
+                # Send cover image
+                if img_url:
+                    try:
+                        await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=img_url,
+                            caption=f"🎵 Обложка для трека: <b>{title}</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Callback: failed to send cover {i}: {e}")
+
+                # Download and send audio file
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(url, timeout=60.0)
+                    resp.raise_for_status()
+                    audio_data = resp.content
+
+                audio_file = BufferedInputFile(
+                    audio_data,
+                    filename=f"{title}.mp3",
+                )
+                await bot.send_audio(
                     chat_id=chat_id,
-                    message_id=status_msg_id,
-                    text=GENERATION_COMPLETE,
-                    parse_mode="HTML",
-                    reply_markup=result_kb(gen_id),
+                    audio=audio_file,
+                    title=title,
+                    performer="AI Melody",
+                    reply_markup=track_kb(gen_id, i),
                 )
             except Exception as e:
-                logger.error(f"Callback: failed to edit status msg: {e}")
+                logger.error(f"Callback: failed to send track {i}: {e}")
+
+        # Send after-generation keyboard
+        await bot.send_message(
+            chat_id=chat_id,
+            text=GENERATION_COMPLETE,
+            parse_mode="HTML",
+            reply_markup=after_generation_kb(gen_id),
+        )
+
     except Exception as e:
         logger.error(f"Callback: error sending results to user: {e}")
 

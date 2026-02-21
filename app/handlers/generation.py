@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from app import database as db
 from app.config import config
 from app.keyboards import (
-    mode_kb, gender_kb, style_kb, result_kb,
+    mode_kb, gender_kb, style_kb, track_kb, after_generation_kb,
     main_reply_kb,
 )
 from app.states import GenerationStates
@@ -215,7 +215,18 @@ async def do_generate(message: Message, state: FSMContext):
         return
 
     await state.set_state(GenerationStates.generating)
-    status_msg = await message.answer(GENERATING, parse_mode="HTML")
+
+    # Apply Russian language prefix if enabled
+    api_prompt = prompt
+    if config.russian_language_prefix:
+        api_prompt = f"песня на русском языке. {prompt}"
+
+    status_msg = await message.answer(
+        "🎵 Отлично! Работаю над стихами и мелодией по твоей идее...\n"
+        "Мне нужно 1 минуту.",
+        parse_mode="HTML",
+        reply_markup=main_reply_kb(),
+    )
 
     gen_id = await db.create_generation(
         user_id=user_id,
@@ -235,7 +246,7 @@ async def do_generate(message: Message, state: FSMContext):
                 pass
 
         result = await client.generate(
-            prompt=prompt,
+            prompt=api_prompt,
             style=style,
             voice_gender=voice_gender,
             mode=mode,
@@ -257,9 +268,13 @@ async def do_generate(message: Message, state: FSMContext):
         songs = await client.wait_for_completion(task_id)
 
         audio_urls = []
+        image_urls = []
+        song_titles = []
         for s in songs:
             url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
+            image_urls.append(s.get("imageUrl") or s.get("image_url", ""))
+            song_titles.append(s.get("title", f"AI Melody Track"))
 
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
@@ -273,26 +288,54 @@ async def do_generate(message: Message, state: FSMContext):
             credits_spent=1,
         )
 
-        tg_file_ids = []
+        # Delete status message
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        # SoNata-style delivery: per track — image, then audio with buttons
         for i, url in enumerate(audio_urls[:2]):
-            if url:
-                try:
-                    voice = URLInputFile(url, filename=f"preview_{i+1}.ogg")
-                    sent = await message.answer_voice(
-                        voice,
-                        caption=f"🔊 Вариант {i+1}",
-                    )
-                    tg_file_ids.append(sent.voice.file_id if sent.voice else "")
-                except Exception as e:
-                    logger.error(f"Failed to send voice {i}: {e}")
-                    tg_file_ids.append("")
+            if not url:
+                continue
+            try:
+                # Send cover image if available
+                img_url = image_urls[i] if i < len(image_urls) else ""
+                title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+                if img_url:
+                    try:
+                        await message.answer_photo(
+                            photo=img_url,
+                            caption=f"🎵 Обложка для трека: <b>{title}</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send cover image {i}: {e}")
 
-        await db.update_generation_status(gen_id, "complete", tg_file_ids=tg_file_ids)
+                # Send audio file with track keyboard
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(url, timeout=60.0)
+                    resp.raise_for_status()
+                    audio_data = resp.content
 
-        await status_msg.edit_text(
+                audio_file = BufferedInputFile(
+                    audio_data,
+                    filename=f"{title}.mp3",
+                )
+                await message.answer_audio(
+                    audio_file,
+                    title=title,
+                    performer="AI Melody",
+                    reply_markup=track_kb(gen_id, i),
+                )
+            except Exception as e:
+                logger.error(f"Failed to send track {i}: {e}")
+
+        # Send after-generation keyboard
+        await message.answer(
             GENERATION_COMPLETE,
             parse_mode="HTML",
-            reply_markup=result_kb(gen_id),
+            reply_markup=after_generation_kb(gen_id),
         )
 
     except ContentPolicyError:
@@ -498,9 +541,13 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         songs = await client.wait_for_completion(task_id)
 
         audio_urls = []
+        image_urls = []
+        song_titles = []
         for s in songs:
             url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
+            image_urls.append(s.get("imageUrl") or s.get("image_url", ""))
+            song_titles.append(s.get("title", f"AI Melody Track"))
 
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
@@ -510,18 +557,51 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         await db.update_last_generation(user_id)
         await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1)
 
-        for i, url in enumerate(audio_urls[:2]):
-            if url:
-                try:
-                    voice = URLInputFile(url, filename=f"preview_{i+1}.ogg")
-                    await callback.message.answer_voice(voice, caption=f"🔊 Вариант {i+1}")
-                except Exception as e:
-                    logger.error(f"Regen voice send error: {e}")
+        # Delete status message
+        try:
+            await msg.delete()
+        except Exception:
+            pass
 
-        await msg.edit_text(
+        # SoNata-style delivery: per track — image, then audio with buttons
+        for i, url in enumerate(audio_urls[:2]):
+            if not url:
+                continue
+            try:
+                img_url = image_urls[i] if i < len(image_urls) else ""
+                title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+                if img_url:
+                    try:
+                        await callback.message.answer_photo(
+                            photo=img_url,
+                            caption=f"🎵 Обложка для трека: <b>{title}</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Regen: failed to send cover image {i}: {e}")
+
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(url, timeout=60.0)
+                    resp.raise_for_status()
+                    audio_data = resp.content
+
+                audio_file = BufferedInputFile(
+                    audio_data,
+                    filename=f"{title}.mp3",
+                )
+                await callback.message.answer_audio(
+                    audio_file,
+                    title=title,
+                    performer="AI Melody",
+                    reply_markup=track_kb(gen_id_new, i),
+                )
+            except Exception as e:
+                logger.error(f"Regen track send error {i}: {e}")
+
+        await callback.message.answer(
             GENERATION_COMPLETE,
             parse_mode="HTML",
-            reply_markup=result_kb(gen_id_new),
+            reply_markup=after_generation_kb(gen_id_new),
         )
 
     except ContentPolicyError:

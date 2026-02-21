@@ -71,6 +71,9 @@ class Config:
     min_account_age_hours: int = int(os.getenv("MIN_ACCOUNT_AGE_HOURS", "0"))
     min_telegram_user_id: int = int(os.getenv("MIN_TELEGRAM_USER_ID", "0"))
 
+    # Russian language prefix in Suno prompts
+    russian_language_prefix: bool = os.getenv("RUSSIAN_LANGUAGE_PREFIX", "1") == "1"
+
     # Admin panel
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     admin_port: int = int(os.getenv("ADMIN_PORT", "8080"))
