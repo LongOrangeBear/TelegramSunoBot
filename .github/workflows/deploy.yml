@@ -48,6 +48,7 @@ jobs:
             SUNO_API_URL=https://api.kie.ai
             SUNO_API_KEY=${{ secrets.SUNO_API_KEY }}
             SUNO_MODEL=V4
+            SUNOAPI_ORG_API_KEY=${{ secrets.SUNOAPI_ORG_API_KEY }}
             CALLBACK_BASE_URL=https://enotai.ru
             MAX_GENERATIONS_PER_HOUR=30
             MAX_GENERATIONS_PER_USER_PER_DAY=10
