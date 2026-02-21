@@ -1,4 +1,4 @@
-"""Callback endpoint for receiving Suno API results from KIE.ai."""
+"""Callback endpoint for receiving Suno API results."""
 
 import asyncio
 import logging
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def handle_suno_callback(request: web.Request) -> web.Response:
     """
-    Receive callback POST from KIE.ai when a generation task finishes.
+    Receive callback POST from SunoAPI.org when a generation task finishes.
 
     Expected payload (per API docs):
     {

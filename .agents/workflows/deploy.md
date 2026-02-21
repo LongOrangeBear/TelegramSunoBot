@@ -2,6 +2,13 @@
 description: How to deploy the bot to the production server (FastVPS)
 ---
 
+## Important Notes
+
+- **Auto-deploy**: Pushing to `main` triggers GitHub Actions which automatically pulls code, installs deps, and **restarts the bot** via `systemctl restart telegram-suno-bot`. No manual restart needed after push.
+- **`.env` is preserved**: The deploy pipeline only creates `.env` on first deploy. On subsequent deploys it updates only secrets (BOT_TOKEN, API keys, ADMIN_TOKEN, DATABASE_URL) via `sed`, preserving runtime settings (SUNO_MODEL, FREE_CREDITS_ON_SIGNUP, limits etc.) changed through the admin panel.
+- **Never suggest restarting the server** — it happens automatically on deploy.
+- The app directory on the server is `/opt/telegram-suno-bot`.
+
 ## Server Access
 
 - **Provider**: FastVPS
@@ -32,16 +39,16 @@ systemctl status telegram-suno-bot
 journalctl -u telegram-suno-bot -n 100 --no-pager
 ```
 
-## Deploy Changes
+## Manual Deploy (if needed)
 
 4. Pull latest changes from GitHub:
 ```bash
-cd /root/telegramMusic && git pull origin main
+cd /opt/telegram-suno-bot && git pull origin main
 ```
 
 5. Install dependencies:
 ```bash
-cd /root/telegramMusic && source venv/bin/activate && pip install -r requirements.txt
+cd /opt/telegram-suno-bot && source venv/bin/activate && pip install -r requirements.txt
 ```
 
 6. Ask the user to restart the bot service (never restart automatically):

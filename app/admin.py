@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
-from app.config import config, PROVIDER_CONFIGS, persist_env_var
+from app.config import config, persist_env_var
 from app import database as db
 
 logger = logging.getLogger(__name__)
@@ -386,14 +386,6 @@ async def dashboard(request: web.Request):
     except Exception as e:
         logger.warning(f"Could not get deploy time: {e}")
 
-    # API provider selector
-    provider = config.api_provider
-    provider_options = "".join(
-        f'<option value="{p}" {"selected" if p == provider else ""}>{PROVIDER_CONFIGS[p]["label"]}</option>'
-        for p in PROVIDER_CONFIGS
-    )
-    provider_label = PROVIDER_CONFIGS.get(provider, {}).get("label", provider)
-
     model = config.suno_model
     model_options = "".join(
         f'<option value="{m}" {"selected" if m == model else ""}>{m}</option>'
@@ -405,8 +397,8 @@ async def dashboard(request: web.Request):
     success_html = ""
     if success == "credits_set":
         success_html = '<span class="success-msg">✅ Стартовые кредиты обновлены</span>'
-    elif success == "provider_set":
-        success_html = f'<span class="success-msg">✅ Провайдер изменён на {PROVIDER_CONFIGS.get(config.api_provider, {}).get("label", config.api_provider)}</span>'
+    elif success == "model_set":
+        success_html = f'<span class="success-msg">✅ Модель изменена на {config.suno_model}</span>'
     elif success == "daily_limit_set":
         success_html = f'<span class="success-msg">✅ Лимит изменён на {config.max_generations_per_user_per_day}/день</span>'
 
@@ -463,18 +455,7 @@ async def dashboard(request: web.Request):
     <table>
         <thead><tr><th>Параметр</th><th>Значение</th><th>Описание</th></tr></thead>
         <tbody>
-            <tr>
-                <td>🔌 API Провайдер</td>
-                <td>
-                    <form method="POST" action="/admin/set_api_provider?{tp}" class="admin-form">
-                        <select name="provider" class="admin-input" style="width:auto;">
-                            {provider_options}
-                        </select>
-                        <button type="submit" class="admin-btn">Применить</button>
-                    </form>
-                </td>
-                <td>Сервис-провайдер Suno API (при смене обновятся URL и доступные модели)</td>
-            </tr>
+            <tr><td>📡 API URL</td><td><code>{config.suno_api_url}</code> <span class="badge badge-info">SunoAPI.org</span></td><td>URL провайдера API</td></tr>
             <tr>
                 <td>🤖 Модель генерации</td>
                 <td>
@@ -497,7 +478,6 @@ async def dashboard(request: web.Request):
                 </td>
                 <td>Кол-во бесплатных кредитов при первом /start</td>
             </tr>
-            <tr><td>📡 API URL</td><td><code>{config.suno_api_url}</code> <span class="badge badge-info">{provider_label}</span></td><td>URL провайдера API (обновляется автоматически при смене провайдера)</td></tr>
             <tr>
                 <td>📊 Лимит/день на юзера</td>
                 <td>
@@ -895,21 +875,6 @@ async def set_free_credits(request: web.Request):
     raise web.HTTPFound(f"/admin/?{tp}&success=credits_set")
 
 
-@auth_required
-async def set_api_provider(request: web.Request):
-    """Switch the API provider at runtime."""
-    tp = token_param(request)
-    data = await request.post()
-    new_provider = data.get("provider", "")
-    if new_provider in PROVIDER_CONFIGS:
-        config.apply_provider(new_provider)
-        persist_env_var("API_PROVIDER", new_provider)
-        # Reset suno client so it picks up new URL and API key
-        from app.suno_api import close_suno_client
-        await close_suno_client()
-        logger.info(f"API provider changed to {new_provider} via admin panel")
-    raise web.HTTPFound(f"/admin/?{tp}&success=provider_set")
-
 
 @auth_required
 async def credit_user(request: web.Request):
@@ -961,7 +926,6 @@ def create_admin_app() -> web.Application:
     app.router.add_get("/admin/", dashboard)
     app.router.add_post("/admin/set_model", set_model)
     app.router.add_post("/admin/set_free_credits", set_free_credits)
-    app.router.add_post("/admin/set_api_provider", set_api_provider)
     app.router.add_post("/admin/set_daily_limit", set_daily_limit)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)

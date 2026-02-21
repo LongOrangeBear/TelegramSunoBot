@@ -39,19 +39,9 @@ def persist_env_var(key: str, value: str):
         _logger.warning(f"Failed to persist {key} to .env: {e}")
 
 
-# Provider configurations: base_url, models
-PROVIDER_CONFIGS = {
-    "kie_ai": {
-        "label": "KIE.ai",
-        "base_url": "https://api.kie.ai",
-        "models": ["V3_5", "V4", "V4_5", "V4_5PLUS", "V5"],
-    },
-    "sunoapi_org": {
-        "label": "SunoAPI.org",
-        "base_url": "https://api.sunoapi.org",
-        "models": ["V4", "V4_5", "V4_5PLUS", "V4_5ALL", "V5"],
-    },
-}
+# SunoAPI.org configuration
+SUNO_API_BASE_URL = "https://api.sunoapi.org"
+SUNO_AVAILABLE_MODELS = ["V4", "V4_5", "V4_5PLUS", "V4_5ALL", "V5"]
 
 
 @dataclass
@@ -62,19 +52,15 @@ class Config:
     # Database
     database_url: str = os.getenv("DATABASE_URL", "postgresql://ai_melody:ai_melody@localhost:5432/ai_melody")
 
-    # Suno API — provider selection
-    api_provider: str = os.getenv("API_PROVIDER", "kie_ai")
-
-    # Suno API keys per provider
-    suno_api_url: str = os.getenv("SUNO_API_URL", "https://api.kie.ai")
+    # Suno API (SunoAPI.org)
+    suno_api_url: str = SUNO_API_BASE_URL
     suno_api_key: str = os.getenv("SUNO_API_KEY", "")
-    sunoapi_org_api_key: str = os.getenv("SUNOAPI_ORG_API_KEY", "")
-    suno_model: str = os.getenv("SUNO_MODEL", "V4")
+    suno_model: str = os.getenv("SUNO_MODEL", "V3_5")
 
     # Callback (public URL for Suno API to POST results)
     callback_base_url: str = os.getenv("CALLBACK_BASE_URL", "")
 
-    # Available Suno models (computed from active provider)
+    # Available Suno models
     available_models: list = None
 
     # Limits
@@ -94,7 +80,9 @@ class Config:
     def __post_init__(self):
         if not self.bot_token:
             raise ValueError("BOT_TOKEN is required")
-        self.apply_provider(self.api_provider)
+        self.available_models = list(SUNO_AVAILABLE_MODELS)
+        if self.suno_model not in self.available_models:
+            self.suno_model = self.available_models[0]
         self.credit_packages = [
             {"credits": 1, "stars": 75, "label": "1🎵 — ⭐75"},
             {"credits": 2, "stars": 140, "label": "2🎵 — ⭐140"},
@@ -103,24 +91,6 @@ class Config:
             {"credits": 10, "stars": 500, "label": "10🎵 — ⭐500"},
             {"credits": 50, "stars": 2000, "label": "50🎵 — ⭐2000"},
         ]
-
-    def apply_provider(self, provider: str):
-        """Switch active API provider and update URL/models accordingly."""
-        if provider not in PROVIDER_CONFIGS:
-            provider = "kie_ai"
-        self.api_provider = provider
-        pconf = PROVIDER_CONFIGS[provider]
-        self.suno_api_url = pconf["base_url"]
-        self.available_models = list(pconf["models"])
-        # Reset model if current one is not available for this provider
-        if self.suno_model not in self.available_models:
-            self.suno_model = self.available_models[0]
-
-    def get_active_api_key(self) -> str:
-        """Return the API key for the currently active provider."""
-        if self.api_provider == "sunoapi_org":
-            return self.sunoapi_org_api_key
-        return self.suno_api_key
 
 
 config = Config()

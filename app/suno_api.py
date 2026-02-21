@@ -1,4 +1,4 @@
-"""Suno API client via KIE.ai v1 API."""
+"""Suno API client via SunoAPI.org v1 API."""
 
 import asyncio
 import logging
@@ -22,11 +22,11 @@ class ContentPolicyError(SunoApiError):
 
 
 class SunoClient:
-    """Client for interacting with Suno API through KIE.ai v1 API."""
+    """Client for interacting with Suno API through SunoAPI.org v1 API."""
 
     def __init__(self):
         self.base_url = config.suno_api_url.rstrip("/")
-        self.api_key = config.get_active_api_key()
+        self.api_key = config.suno_api_key
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={
@@ -47,6 +47,12 @@ class SunoClient:
             dict with task_id for polling lyrics status
         """
         payload = {"prompt": prompt}
+
+        # Add callback URL if configured (required by the API)
+        if config.callback_base_url:
+            payload["callBackUrl"] = f"{config.callback_base_url.rstrip('/')}/callback/lyrics"
+        else:
+            payload["callBackUrl"] = "https://example.com/callback/lyrics"
 
         logger.info(f"Lyrics generation request: /api/v1/lyrics | {payload}")
 

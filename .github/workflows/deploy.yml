@@ -41,13 +41,13 @@ jobs:
             fi
             ./venv/bin/pip install -r requirements.txt --quiet
 
-            # Write .env from secrets
-            cat > .env << 'ENVEOF'
+            # Create .env only on first deploy; preserve runtime settings on subsequent deploys
+            if [ ! -f .env ]; then
+              cat > .env << ENVEOF
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
-            SUNO_API_URL=https://api.kie.ai
             SUNO_API_KEY=${{ secrets.SUNO_API_KEY }}
-            SUNO_MODEL=V4
+            SUNO_MODEL=V3_5
             SUNOAPI_ORG_API_KEY=${{ secrets.SUNOAPI_ORG_API_KEY }}
             CALLBACK_BASE_URL=https://enotai.ru
             MAX_GENERATIONS_PER_HOUR=30
@@ -58,9 +58,15 @@ jobs:
             ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
             ADMIN_PORT=8080
             ENVEOF
+              sed -i 's/^[[:space:]]*//' .env
+            fi
 
-            # Remove leading whitespace from .env (heredoc indentation)
-            sed -i 's/^[[:space:]]*//' .env
+            # Always update secrets (tokens may rotate), but preserve runtime settings
+            sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=${{ secrets.BOT_TOKEN }}|" .env
+            sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${{ secrets.DATABASE_URL }}|" .env
+            sed -i "s|^SUNO_API_KEY=.*|SUNO_API_KEY=${{ secrets.SUNO_API_KEY }}|" .env
+            sed -i "s|^SUNOAPI_ORG_API_KEY=.*|SUNOAPI_ORG_API_KEY=${{ secrets.SUNOAPI_ORG_API_KEY }}|" .env
+            sed -i "s|^ADMIN_TOKEN=.*|ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}|" .env
 
             # Restart service
             systemctl restart telegram-suno-bot
