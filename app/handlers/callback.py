@@ -1,5 +1,6 @@
 """Callback endpoint for receiving Suno API results from KIE.ai."""
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -15,19 +16,22 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
     """
     Receive callback POST from KIE.ai when a generation task finishes.
 
-    Expected payload:
+    Expected payload (per API docs):
     {
         "code": 200,
-        "msg": "success",
+        "msg": "All generated successfully.",
         "data": {
-            "taskId": "...",
             "callbackType": "complete",
+            "task_id": "...",
             "data": [
                 {
                     "id": "...",
-                    "audioUrl": "https://...",
-                    "streamAudioUrl": "https://...",
+                    "audio_url": "https://...",
+                    "stream_audio_url": "https://...",
+                    "image_url": "https://...",
                     "title": "...",
+                    "tags": "...",
+                    "duration": 198.44,
                     ...
                 }
             ]
@@ -40,14 +44,20 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
         logger.warning("Callback: invalid JSON body")
         return web.json_response({"status": "error", "msg": "invalid json"}, status=400)
 
-    logger.info(f"Suno callback received: code={payload.get('code')}")
-
     code = payload.get("code")
     data = payload.get("data", {})
-    task_id = data.get("taskId", "")
+    task_id = data.get("task_id", "")
+    callback_type = data.get("callbackType", "")
+
+    logger.info(f"Suno callback received: code={code}, task_id={task_id}, type={callback_type}")
 
     if not task_id:
-        logger.warning(f"Callback: no taskId in payload: {payload}")
+        logger.warning(f"Callback: no task_id in payload: {payload}")
+        return web.json_response({"status": "ok"})
+
+    # Handle intermediate callback types (text, first) — just log and acknowledge
+    if callback_type in ("text", "first"):
+        logger.info(f"Callback: intermediate type '{callback_type}' for task_id={task_id}, ignoring")
         return web.json_response({"status": "ok"})
 
     # Find generation by task_id (stored in suno_song_ids)
@@ -59,23 +69,22 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
     gen_id = gen["id"]
     user_id = gen["user_id"]
 
+    # Idempotency: skip if already completed
+    if gen["status"] == "complete":
+        logger.info(f"Callback: generation {gen_id} already complete, skipping duplicate")
+        return web.json_response({"status": "ok"})
+
     # Get bot instance from app context
     get_bot = request.app.get("get_bot")
     bot = get_bot() if get_bot else None
 
-    if code == 200:
+    if code == 200 and callback_type == "complete":
         # Success — extract audio URLs
-        callback_type = data.get("callbackType", "")
         suno_data = data.get("data", [])
-
-        if not suno_data:
-            # Sometimes data comes in response.sunoData format
-            response_obj = data.get("response", {})
-            suno_data = response_obj.get("sunoData", [])
 
         audio_urls = []
         for s in suno_data:
-            url = s.get("audioUrl") or s.get("streamAudioUrl") or s.get("audio_url", "")
+            url = s.get("audio_url") or s.get("stream_audio_url", "")
             audio_urls.append(url)
 
         if not audio_urls:
@@ -97,64 +106,82 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
             credits_spent=1,
         )
 
-        # Send result to user via bot
+        # Send result to user via bot asynchronously (don't block the 200 response)
         if bot and gen.get("callback_chat_id"):
-            chat_id = gen["callback_chat_id"]
-            status_msg_id = gen.get("callback_message_id")
-
-            try:
-                from aiogram.types import URLInputFile
-
-                # Send voice previews
-                for i, url in enumerate(audio_urls[:2]):
-                    if url:
-                        try:
-                            voice = URLInputFile(url, filename=f"preview_{i+1}.ogg")
-                            await bot.send_voice(
-                                chat_id=chat_id,
-                                voice=voice,
-                                caption=f"🔊 Вариант {i+1}",
-                            )
-                        except Exception as e:
-                            logger.error(f"Callback: failed to send voice {i}: {e}")
-
-                # Update status message
-                if status_msg_id:
-                    try:
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=status_msg_id,
-                            text=GENERATION_COMPLETE,
-                            parse_mode="HTML",
-                            reply_markup=result_kb(gen_id),
-                        )
-                    except Exception as e:
-                        logger.error(f"Callback: failed to edit status msg: {e}")
-            except Exception as e:
-                logger.error(f"Callback: error sending results to user: {e}")
+            asyncio.create_task(
+                _deliver_result_to_user(bot, gen, gen_id, audio_urls)
+            )
 
         logger.info(f"Callback: generation {gen_id} completed with {len(audio_urls)} tracks")
 
-    else:
+    elif code != 200 or callback_type == "error":
         # Error
         error_msg = payload.get("msg", "Unknown error")
         await db.update_generation_status(gen_id, "error", error_message=error_msg)
 
         if bot and gen.get("callback_chat_id"):
-            chat_id = gen["callback_chat_id"]
-            status_msg_id = gen.get("callback_message_id")
-            if status_msg_id:
-                try:
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=status_msg_id,
-                        text=GENERATION_ERROR,
-                        parse_mode="HTML",
-                        reply_markup=back_menu_kb(),
-                    )
-                except Exception as e:
-                    logger.error(f"Callback: failed to edit error msg: {e}")
+            asyncio.create_task(
+                _deliver_error_to_user(bot, gen, error_msg)
+            )
 
         logger.warning(f"Callback: generation {gen_id} failed: {error_msg}")
 
+    else:
+        logger.info(f"Callback: unhandled code={code}, type={callback_type} for task_id={task_id}")
+
     return web.json_response({"status": "ok"})
+
+
+async def _deliver_result_to_user(bot, gen: dict, gen_id: int, audio_urls: list[str]):
+    """Send generation results to the user in Telegram (runs as background task)."""
+    chat_id = gen["callback_chat_id"]
+    status_msg_id = gen.get("callback_message_id")
+
+    try:
+        from aiogram.types import URLInputFile
+
+        # Send voice previews
+        for i, url in enumerate(audio_urls[:2]):
+            if url:
+                try:
+                    voice = URLInputFile(url, filename=f"preview_{i+1}.ogg")
+                    await bot.send_voice(
+                        chat_id=chat_id,
+                        voice=voice,
+                        caption=f"🔊 Вариант {i+1}",
+                    )
+                except Exception as e:
+                    logger.error(f"Callback: failed to send voice {i}: {e}")
+
+        # Update status message
+        if status_msg_id:
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_msg_id,
+                    text=GENERATION_COMPLETE,
+                    parse_mode="HTML",
+                    reply_markup=result_kb(gen_id),
+                )
+            except Exception as e:
+                logger.error(f"Callback: failed to edit status msg: {e}")
+    except Exception as e:
+        logger.error(f"Callback: error sending results to user: {e}")
+
+
+async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
+    """Send error notification to the user in Telegram (runs as background task)."""
+    chat_id = gen["callback_chat_id"]
+    status_msg_id = gen.get("callback_message_id")
+
+    if status_msg_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_msg_id,
+                text=GENERATION_ERROR,
+                parse_mode="HTML",
+                reply_markup=back_menu_kb(),
+            )
+        except Exception as e:
+            logger.error(f"Callback: failed to edit error msg: {e}")

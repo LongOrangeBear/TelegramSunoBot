@@ -292,7 +292,7 @@ async def do_generate(message: Message, state: FSMContext):
         # Extract audio URLs from sunoData (camelCase keys)
         audio_urls = []
         for s in songs:
-            url = s.get("audioUrl") or s.get("streamAudioUrl") or s.get("audio_url", "")
+            url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
 
         # Deduct credit
@@ -515,7 +515,7 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
 
         audio_urls = []
         for s in songs:
-            url = s.get("audioUrl") or s.get("streamAudioUrl") or s.get("audio_url", "")
+            url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
 
         # Deduct credit
