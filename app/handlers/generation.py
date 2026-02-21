@@ -169,7 +169,16 @@ async def on_custom_style(message: Message, state: FSMContext):
 
 @router.message(GenerationStates.entering_prompt)
 async def on_prompt(message: Message, state: FSMContext):
-    await state.update_data(prompt=message.text.strip())
+    text = message.text.strip()
+    if len(text) > 500:
+        await message.answer(
+            f"⚠️ Описание слишком длинное ({len(text)} символов). "
+            "Максимум — 500 символов. Сократите текст и отправьте снова.",
+            parse_mode="HTML",
+            reply_markup=back_menu_kb(),
+        )
+        return
+    await state.update_data(prompt=text)
     await do_generate(message, state)
 
 
