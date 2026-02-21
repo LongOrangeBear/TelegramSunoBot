@@ -5,7 +5,7 @@ from datetime import datetime
 
 from aiohttp import web
 
-from app.config import config
+from app.config import config, PROVIDER_CONFIGS
 from app import database as db
 
 logger = logging.getLogger(__name__)
@@ -341,6 +341,14 @@ async def dashboard(request: web.Request):
         logger.warning(f"Could not fetch Stars balance: {e}")
         stars_balance = "N/A"
 
+    # API provider selector
+    provider = config.api_provider
+    provider_options = "".join(
+        f'<option value="{p}" {"selected" if p == provider else ""}>{PROVIDER_CONFIGS[p]["label"]}</option>'
+        for p in PROVIDER_CONFIGS
+    )
+    provider_label = PROVIDER_CONFIGS.get(provider, {}).get("label", provider)
+
     model = config.suno_model
     model_options = "".join(
         f'<option value="{m}" {"selected" if m == model else ""}>{m}</option>'
@@ -352,6 +360,8 @@ async def dashboard(request: web.Request):
     success_html = ""
     if success == "credits_set":
         success_html = '<span class="success-msg">✅ Стартовые кредиты обновлены</span>'
+    elif success == "provider_set":
+        success_html = f'<span class="success-msg">✅ Провайдер изменён на {PROVIDER_CONFIGS.get(config.api_provider, {}).get("label", config.api_provider)}</span>'
 
     content = f"""
     <h1>📊 Дашборд</h1>
@@ -394,10 +404,22 @@ async def dashboard(request: web.Request):
         </div>
     </div>
 
-    <div class="section-title">⚙️ Конфигурация</div>
+    <div class="section-title">⚙️ Конфигурация {success_html}</div>
     <table>
         <thead><tr><th>Параметр</th><th>Значение</th><th>Описание</th></tr></thead>
         <tbody>
+            <tr>
+                <td>🔌 API Провайдер</td>
+                <td>
+                    <form method="POST" action="/admin/set_api_provider?{tp}" class="admin-form">
+                        <select name="provider" class="admin-input" style="width:auto;">
+                            {provider_options}
+                        </select>
+                        <button type="submit" class="admin-btn">Применить</button>
+                    </form>
+                </td>
+                <td>Сервис-провайдер Suno API (при смене обновятся URL и доступные модели)</td>
+            </tr>
             <tr>
                 <td>🤖 Модель генерации</td>
                 <td>
@@ -417,11 +439,10 @@ async def dashboard(request: web.Request):
                         <input type="number" name="free_credits" value="{config.free_credits_on_signup}" min="0" max="100" class="admin-input">
                         <button type="submit" class="admin-btn">Сохранить</button>
                     </form>
-                    {success_html}
                 </td>
                 <td>Кол-во бесплатных кредитов при первом /start</td>
             </tr>
-            <tr><td>📡 API URL</td><td><code>{config.suno_api_url}</code></td><td>URL провайдера API</td></tr>
+            <tr><td>📡 API URL</td><td><code>{config.suno_api_url}</code> <span class="badge badge-info">{provider_label}</span></td><td>URL провайдера API (обновляется автоматически при смене провайдера)</td></tr>
             <tr><td>📊 Лимит/день на юзера</td><td>{config.max_generations_per_user_per_day}</td><td>Максимум генераций в день на одного пользователя</td></tr>
             <tr><td>📊 Лимит/час глобальный</td><td>{config.max_generations_per_hour}</td><td>Максимум генераций в час по всему боту (защита от перегрузки API)</td></tr>
         </tbody>
@@ -779,7 +800,7 @@ async def set_model(request: web.Request):
         from app.suno_api import close_suno_client
         await close_suno_client()
         logger.info(f"Model changed to {new_model} via admin panel")
-    raise web.HTTPFound(f"/admin/?{tp}")
+    raise web.HTTPFound(f"/admin/?{tp}&success=model_set")
 
 
 @auth_required
@@ -795,6 +816,21 @@ async def set_free_credits(request: web.Request):
     except (ValueError, TypeError):
         pass
     raise web.HTTPFound(f"/admin/?{tp}&success=credits_set")
+
+
+@auth_required
+async def set_api_provider(request: web.Request):
+    """Switch the API provider at runtime."""
+    tp = token_param(request)
+    data = await request.post()
+    new_provider = data.get("provider", "")
+    if new_provider in PROVIDER_CONFIGS:
+        config.apply_provider(new_provider)
+        # Reset suno client so it picks up new URL and API key
+        from app.suno_api import close_suno_client
+        await close_suno_client()
+        logger.info(f"API provider changed to {new_provider} via admin panel")
+    raise web.HTTPFound(f"/admin/?{tp}&success=provider_set")
 
 
 @auth_required
@@ -821,6 +857,7 @@ def create_admin_app() -> web.Application:
     app.router.add_get("/admin/", dashboard)
     app.router.add_post("/admin/set_model", set_model)
     app.router.add_post("/admin/set_free_credits", set_free_credits)
+    app.router.add_post("/admin/set_api_provider", set_api_provider)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
     app.router.add_post("/admin/user/{id}/credit", credit_user)

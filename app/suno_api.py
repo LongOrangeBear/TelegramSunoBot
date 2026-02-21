@@ -26,7 +26,7 @@ class SunoClient:
 
     def __init__(self):
         self.base_url = config.suno_api_url.rstrip("/")
-        self.api_key = config.suno_api_key
+        self.api_key = config.get_active_api_key()
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={
