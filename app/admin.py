@@ -1,7 +1,8 @@
 """Admin panel web interface for AI Melody Bot."""
 
 import logging
-from datetime import datetime
+import subprocess
+from datetime import datetime, timezone
 
 from aiohttp import web
 
@@ -341,6 +342,50 @@ async def dashboard(request: web.Request):
         logger.warning(f"Could not fetch Stars balance: {e}")
         stars_balance = "N/A"
 
+    # Get last restart time
+    last_restart = "—"
+    try:
+        get_start_time = request.app.get("get_start_time")
+        if get_start_time:
+            start_time = get_start_time()
+            if start_time:
+                # Convert UTC to Moscow time (UTC+3)
+                import datetime as dt_mod
+                msk_offset = dt_mod.timedelta(hours=3)
+                msk_time = start_time + msk_offset
+                last_restart = msk_time.strftime("%d.%m.%Y %H:%M:%S")
+    except Exception as e:
+        logger.warning(f"Could not get restart time: {e}")
+
+    # Get last deploy time (from git commit date)
+    last_deploy = "—"
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%ci"],
+            capture_output=True, text=True, timeout=5,
+            cwd="/opt/telegram-suno-bot"
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Parse git date like "2026-02-21 16:04:00 +0300"
+            git_date = datetime.strptime(result.stdout.strip(), "%Y-%m-%d %H:%M:%S %z")
+            last_deploy = git_date.strftime("%d.%m.%Y %H:%M:%S")
+    except FileNotFoundError:
+        # Try current working directory as fallback
+        try:
+            import os
+            result = subprocess.run(
+                ["git", "log", "-1", "--format=%ci"],
+                capture_output=True, text=True, timeout=5,
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                git_date = datetime.strptime(result.stdout.strip(), "%Y-%m-%d %H:%M:%S %z")
+                last_deploy = git_date.strftime("%d.%m.%Y %H:%M:%S")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f"Could not get deploy time: {e}")
+
     # API provider selector
     provider = config.api_provider
     provider_options = "".join(
@@ -399,8 +444,16 @@ async def dashboard(request: web.Request):
             <div class="label">Кредитов продано</div>
         </div>
         <div class="stat-card">
-            <div class="value">⭐{stats['avg_rating']}</div>
+            <div class="value" style="font-size: 22px;">⭐{stats['avg_rating']}</div>
             <div class="label">Средняя оценка</div>
+        </div>
+        <div class="stat-card" style="border-color: rgba(34, 197, 94, 0.4); background: linear-gradient(145deg, #0a2214 0%, #16162e 100%);">
+            <div class="value" style="font-size: 18px; color: #4ade80;">🔄 {last_restart}</div>
+            <div class="label">Последний перезапуск</div>
+        </div>
+        <div class="stat-card" style="border-color: rgba(59, 130, 246, 0.4); background: linear-gradient(145deg, #0a1628 0%, #16162e 100%);">
+            <div class="value" style="font-size: 18px; color: #60a5fa;">🚀 {last_deploy}</div>
+            <div class="label">Последний деплой</div>
         </div>
     </div>
 

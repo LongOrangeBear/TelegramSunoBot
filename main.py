@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -25,9 +26,12 @@ logger = logging.getLogger(__name__)
 
 # Shared bot instance for admin panel
 bot_instance: Bot | None = None
+bot_start_time: datetime | None = None
 
 
 async def on_startup(bot: Bot):
+    global bot_start_time
+    bot_start_time = datetime.now(timezone.utc)
     logger.info("Bot starting up...")
     await init_db()
     logger.info("Database initialized")
@@ -78,6 +82,7 @@ async def run_admin():
     app = create_admin_app()
     # Pass bot_instance getter to admin app
     app["get_bot"] = lambda: bot_instance
+    app["get_start_time"] = lambda: bot_start_time
 
     # Register callback routes on the same app
     app.router.add_post("/callback/suno", handle_suno_callback)

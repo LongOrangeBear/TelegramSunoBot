@@ -23,13 +23,13 @@ ssh root@5.45.112.38
 // turbo
 2. Check if the bot service is running:
 ```bash
-systemctl status ai-melody-bot
+systemctl status telegram-suno-bot
 ```
 
 // turbo
 3. View recent logs:
 ```bash
-journalctl -u ai-melody-bot -n 100 --no-pager
+journalctl -u telegram-suno-bot -n 100 --no-pager
 ```
 
 ## Deploy Changes
@@ -46,7 +46,7 @@ cd /root/telegramMusic && source venv/bin/activate && pip install -r requirement
 
 6. Ask the user to restart the bot service (never restart automatically):
 ```
-systemctl restart ai-melody-bot
+systemctl restart telegram-suno-bot
 ```
 
 ## View Logs
@@ -54,5 +54,5 @@ systemctl restart ai-melody-bot
 // turbo
 7. Tail live logs:
 ```bash
-journalctl -u ai-melody-bot -f
+journalctl -u telegram-suno-bot -f
 ```
