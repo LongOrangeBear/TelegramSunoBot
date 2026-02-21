@@ -22,7 +22,11 @@ jobs:
 
             # Clone or pull
             if [ ! -d "$APP_DIR/.git" ]; then
-              git clone https://github.com/LongOrangeBear/TelegramSunoBot.git $APP_DIR
+              cd $APP_DIR
+              git init
+              git remote add origin https://github.com/LongOrangeBear/TelegramSunoBot.git
+              git fetch origin
+              git checkout -f main
             else
               cd $APP_DIR
               git fetch origin
