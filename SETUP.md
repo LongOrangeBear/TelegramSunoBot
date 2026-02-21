@@ -4,8 +4,8 @@
 
 1. Откройте Telegram, найдите **@BotFather** (с синей галочкой)
 2. Отправьте `/newbot`
-3. Введите **отображаемое имя** бота (например: `Suno Music Generator`)
-4. Введите **username** бота (должен заканчиваться на `bot`, например: `MySunoMusicBot`)
+3. Введите **отображаемое имя** бота (например: `AI Melody`)
+4. Введите **username** бота (должен заканчиваться на `bot`, например: `ai_melody_bot`)
 5. BotFather выдаст **API Token** — скопируйте его, это ваш `BOT_TOKEN`
 
 ```
@@ -23,7 +23,7 @@
 
 - **Edit About** → короткое описание:
   ```
-  AI Music Generator на базе Suno
+  AI Music Generator — AI Melody
   ```
 
 - **Edit Commands** → вставьте:
@@ -93,9 +93,9 @@ sudo -u postgres psql
 
 В psql выполните:
 ```sql
-CREATE USER suno_bot WITH PASSWORD 'suno_bot';
-CREATE DATABASE suno_bot OWNER suno_bot;
-GRANT ALL PRIVILEGES ON DATABASE suno_bot TO suno_bot;
+CREATE USER ai_melody WITH PASSWORD 'ai_melody';
+CREATE DATABASE ai_melody OWNER ai_melody;
+GRANT ALL PRIVILEGES ON DATABASE ai_melody TO ai_melody;
 \q
 ```
 
@@ -125,7 +125,7 @@ SUNO_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # === МОЖНО ОСТАВИТЬ ПО УМОЛЧАНИЮ ===
 
 # Подключение к PostgreSQL (шаг 3)
-DATABASE_URL=postgresql://suno_bot:suno_bot@localhost:5432/suno_bot
+DATABASE_URL=postgresql://ai_melody:ai_melody@localhost:5432/ai_melody
 
 # URL API Suno-провайдера
 SUNO_API_URL=https://api.kie.ai
@@ -149,7 +149,7 @@ python3 main.py
 
 Если всё настроено правильно, в логах увидите:
 ```
-Bot @YourBotUsername started (id=1234567890)
+Bot @ai_melody_bot started (id=1234567890)
 ```
 
 ---

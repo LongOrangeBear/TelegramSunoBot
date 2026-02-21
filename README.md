@@ -1,6 +1,6 @@
-# 🎵 Telegram Suno Music Bot
+# 🎵 AI Melody Bot
 
-Telegram-бот для генерации музыки через Suno AI.
+Telegram-бот для генерации музыки через ИИ.
 
 ## Возможности
 
@@ -22,7 +22,7 @@ cp .env.example .env
 
 2. Создайте базу данных PostgreSQL:
 ```bash
-createdb suno_bot
+createdb ai_melody
 ```
 
 3. Запустите бот:

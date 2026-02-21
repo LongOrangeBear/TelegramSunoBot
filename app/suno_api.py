@@ -1,4 +1,4 @@
-"""Suno API client via third-party provider (Kie.ai / musicapi.ai)."""
+"""Suno API client via KIE.ai v1 API."""
 
 import asyncio
 import logging
@@ -9,12 +9,6 @@ import httpx
 from app.config import config
 
 logger = logging.getLogger(__name__)
-
-# Suno API response statuses
-STATUS_PENDING = "pending"
-STATUS_PROCESSING = "processing"
-STATUS_COMPLETE = "complete"
-STATUS_ERROR = "error"
 
 
 class SunoApiError(Exception):
@@ -28,7 +22,7 @@ class ContentPolicyError(SunoApiError):
 
 
 class SunoClient:
-    """Client for interacting with Suno API through a third-party provider."""
+    """Client for interacting with Suno API through KIE.ai v1 API."""
 
     def __init__(self):
         self.base_url = config.suno_api_url.rstrip("/")
@@ -55,18 +49,10 @@ class SunoClient:
         instrumental: bool = False,
     ) -> dict:
         """
-        Start a song generation.
-
-        Args:
-            prompt: Text description or title
-            style: Music style/genre tag
-            voice_gender: 'male' or 'female' (ignored for instrumental)
-            mode: 'description', 'custom', or 'instrumental'
-            lyrics: Custom lyrics text (for custom mode)
-            instrumental: Whether to generate instrumental only
+        Start a song generation via v1 API.
 
         Returns:
-            dict with generation task info including song IDs
+            dict with task_id for polling
         """
         # Build the style tag incorporating gender
         full_style = style
@@ -74,105 +60,126 @@ class SunoClient:
             full_style = f"{voice_gender} vocal, {style}" if style else f"{voice_gender} vocal"
 
         if mode == "custom" and lyrics:
+            # Custom mode: customMode=true, prompt=lyrics, style & title required
             payload = {
                 "prompt": lyrics,
-                "tags": full_style,
+                "customMode": True,
+                "instrumental": False,
+                "model": config.suno_model,
+                "style": full_style or "Pop",
                 "title": prompt or "Untitled",
-                "make_instrumental": False,
             }
-            endpoint = "/api/custom_generate"
         elif mode == "instrumental":
+            # Instrumental: customMode=false, instrumental=true
             payload = {
                 "prompt": f"{prompt}, {style}" if style else prompt,
-                "make_instrumental": True,
+                "customMode": False,
+                "instrumental": True,
+                "model": config.suno_model,
             }
-            endpoint = "/api/generate"
         else:
-            # Description mode
+            # Description mode: customMode=false
             payload = {
                 "prompt": f"{prompt}, style: {full_style}" if full_style else prompt,
-                "make_instrumental": False,
+                "customMode": False,
+                "instrumental": False,
+                "model": config.suno_model,
             }
-            endpoint = "/api/generate"
 
-        logger.info(f"Suno generate request: {endpoint} | {payload}")
+        # Add callback URL if configured
+        if config.callback_base_url:
+            payload["callBackUrl"] = f"{config.callback_base_url.rstrip('/')}/callback/suno"
+
+        logger.info(f"Suno v1 generate request: /api/v1/generate | {payload}")
 
         try:
-            response = await self.client.post(endpoint, json=payload)
+            response = await self.client.post("/api/v1/generate", json=payload)
             response.raise_for_status()
-            data = response.json()
+            result = response.json()
 
-            if isinstance(data, list):
-                song_ids = [item.get("id") for item in data if item.get("id")]
-            elif isinstance(data, dict):
-                if "data" in data and isinstance(data["data"], list):
-                    song_ids = [item.get("id") for item in data["data"] if item.get("id")]
-                elif "id" in data:
-                    song_ids = [data["id"]]
-                else:
-                    song_ids = []
-            else:
-                song_ids = []
+            # v1 API response: {"code": 200, "msg": "success", "data": {"taskId": "..."}}
+            if result.get("code") != 200:
+                msg = result.get("msg", "Unknown error")
+                raise SunoApiError(f"API error: {msg}")
 
-            if not song_ids:
-                raise SunoApiError(f"No song IDs in response: {data}")
+            task_id = result.get("data", {}).get("taskId")
+            if not task_id:
+                raise SunoApiError(f"No taskId in response: {result}")
 
-            return {
-                "song_ids": song_ids,
-                "raw_response": data,
-            }
+            return {"task_id": task_id, "raw_response": result}
 
         except httpx.HTTPStatusError as e:
             error_body = e.response.text
             if "content policy" in error_body.lower() or "moderation" in error_body.lower():
                 raise ContentPolicyError(f"Content policy violation: {error_body}")
+            if "sensitive" in error_body.lower():
+                raise ContentPolicyError(f"Content filtered: {error_body}")
             raise SunoApiError(f"API error {e.response.status_code}: {error_body}")
         except httpx.RequestError as e:
             raise SunoApiError(f"Request failed: {e}")
 
-    async def get_songs(self, song_ids: list[str]) -> list[dict]:
-        """Get song info by IDs."""
-        ids_param = ",".join(song_ids)
+    async def get_task_status(self, task_id: str) -> dict:
+        """Check task status via polling endpoint."""
         try:
-            response = await self.client.get(f"/api/get?ids={ids_param}")
+            response = await self.client.get(
+                f"/api/v1/generate/record-info?taskId={task_id}"
+            )
             response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list):
-                return data
-            elif isinstance(data, dict) and "data" in data:
-                return data["data"]
-            return [data]
+            result = response.json()
+
+            if result.get("code") != 200:
+                raise SunoApiError(f"Status check failed: {result.get('msg', 'Unknown error')}")
+
+            return result.get("data", {})
         except httpx.HTTPStatusError as e:
-            raise SunoApiError(f"Get songs error {e.response.status_code}: {e.response.text}")
+            raise SunoApiError(f"Status check error {e.response.status_code}: {e.response.text}")
 
     async def wait_for_completion(
-        self, song_ids: list[str], timeout: int = 300, poll_interval: int = 8
+        self, task_id: str, timeout: int = 300, poll_interval: int = 10
     ) -> list[dict]:
         """
-        Poll until songs are complete or timeout.
+        Poll until task is complete or timeout.
 
-        Returns list of song dicts with audio_url populated.
+        Returns list of song dicts from sunoData with audioUrl populated.
         """
         start_time = asyncio.get_event_loop().time()
         await asyncio.sleep(5)  # Initial wait
 
         while (asyncio.get_event_loop().time() - start_time) < timeout:
-            songs = await self.get_songs(song_ids)
+            status_data = await self.get_task_status(task_id)
+            status = status_data.get("status", "")
 
-            all_done = all(
-                s.get("status") in ("complete", "streaming")
-                for s in songs
-            )
-            any_error = any(s.get("status") == "error" for s in songs)
+            logger.info(f"Task {task_id} status: {status}")
 
-            if all_done or any_error:
-                return songs
+            if status in ("SUCCESS", "FIRST_SUCCESS"):
+                # Extract sunoData from response
+                response = status_data.get("response", {})
+                suno_data = response.get("sunoData", [])
+                if suno_data:
+                    return suno_data
+                raise SunoApiError(f"No sunoData in successful response: {status_data}")
+
+            elif status == "SENSITIVE_WORD_ERROR":
+                error_msg = status_data.get("errorMessage", "Content filtered due to sensitive words")
+                raise ContentPolicyError(error_msg)
+
+            elif status in ("CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED", "CALLBACK_EXCEPTION"):
+                error_msg = status_data.get("errorMessage", f"Generation failed: {status}")
+                raise SunoApiError(error_msg)
+
+            elif status == "PENDING":
+                pass  # Still processing
+
+            else:
+                logger.warning(f"Unknown task status: {status}")
+                if status_data.get("errorMessage"):
+                    logger.warning(f"Error message: {status_data['errorMessage']}")
 
             await asyncio.sleep(poll_interval)
 
-        # Timeout — return whatever we have
-        logger.warning(f"Generation timeout for songs: {song_ids}")
-        return await self.get_songs(song_ids)
+        # Timeout
+        logger.warning(f"Generation timeout for task: {task_id}")
+        raise SunoApiError(f"Generation timeout after {timeout}s for task {task_id}")
 
 
 # Global client instance

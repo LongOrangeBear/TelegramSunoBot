@@ -1,0 +1,63 @@
+name: Deploy to FastVPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+
+            APP_DIR="/opt/telegram-suno-bot"
+
+            # Clone or pull
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone https://github.com/LongOrangeBear/TelegramSunoBot.git $APP_DIR
+            else
+              cd $APP_DIR
+              git fetch origin
+              git reset --hard origin/main
+            fi
+
+            cd $APP_DIR
+
+            # Create/update venv and install deps
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
+            fi
+            ./venv/bin/pip install -r requirements.txt --quiet
+
+            # Write .env from secrets
+            cat > .env << 'ENVEOF'
+            BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            SUNO_API_URL=https://api.kie.ai
+            SUNO_API_KEY=${{ secrets.SUNO_API_KEY }}
+            SUNO_MODEL=V4
+            CALLBACK_BASE_URL=https://enotai.ru
+            MAX_GENERATIONS_PER_HOUR=30
+            MAX_GENERATIONS_PER_USER_PER_DAY=10
+            FREE_CREDITS_ON_SIGNUP=2
+            MIN_ACCOUNT_AGE_HOURS=0
+            MIN_TELEGRAM_USER_ID=0
+            ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
+            ADMIN_PORT=8080
+            ENVEOF
+
+            # Remove leading whitespace from .env (heredoc indentation)
+            sed -i 's/^[[:space:]]*//' .env
+
+            # Restart service
+            systemctl restart telegram-suno-bot
+            sleep 2
+            systemctl is-active telegram-suno-bot

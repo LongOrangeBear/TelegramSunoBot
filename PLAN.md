@@ -1,4 +1,4 @@
-# Telegram Suno Music Bot — Финальный план
+# AI Melody Bot — Финальный план
 
 ## Принятые решения
 

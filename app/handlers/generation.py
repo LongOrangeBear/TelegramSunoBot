@@ -59,11 +59,18 @@ async def check_credits(user_id: int) -> tuple[bool, dict]:
 
     # Account age check for free credits
     has_free = user["free_generations_left"] > 0
-    if has_free:
-        account_age = datetime.utcnow() - user["created_at"]
+    if has_free and config.min_account_age_hours > 0:
+        # Use datetime.now() to match PostgreSQL NOW() (both use server local time)
+        account_age = datetime.now() - user["created_at"]
         min_age = timedelta(hours=config.min_account_age_hours)
         if account_age < min_age:
-            # Too new — only paid credits count
+            # Too new in bot — only paid credits count
+            has_free = False
+
+    # Telegram account age check (higher ID = newer account)
+    if has_free and config.min_telegram_user_id > 0:
+        if user_id > config.min_telegram_user_id:
+            # Suspiciously new Telegram account — block free credits
             has_free = False
 
     has = (user["credits"] > 0 or has_free)
@@ -93,7 +100,8 @@ async def start_creation(message_or_cb, state: FSMContext):
     # Credits check
     has_credits, user = await check_credits(user_id)
     if not has_credits:
-        text = NO_CREDITS.format(credits=user["credits"])
+        total = user["credits"] + user["free_generations_left"]
+        text = NO_CREDITS.format(credits=total)
         if isinstance(message_or_cb, CallbackQuery):
             from app.handlers.payments import show_buy_menu_edit
             await show_buy_menu_edit(message_or_cb, extra_text=text)
@@ -256,7 +264,7 @@ async def do_generate(message: Message, state: FSMContext):
     try:
         client = get_suno_client()
 
-        # Call Suno API
+        # Call Suno v1 API
         result = await client.generate(
             prompt=prompt,
             style=style,
@@ -266,25 +274,25 @@ async def do_generate(message: Message, state: FSMContext):
             instrumental=(mode == "instrumental"),
         )
 
-        song_ids = result["song_ids"]
-        await db.update_generation_status(gen_id, "processing", suno_song_ids=song_ids)
+        task_id = result["task_id"]
+        await db.update_generation_status(gen_id, "processing", suno_song_ids=[task_id])
 
-        # Wait for completion
-        songs = await client.wait_for_completion(song_ids)
-
-        # Check for errors
-        errors = [s for s in songs if s.get("status") == "error"]
-        if errors:
-            error_msg = errors[0].get("error_message", "Unknown error")
-            await db.update_generation_status(gen_id, "error", error_message=error_msg)
-            await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML", reply_markup=back_menu_kb())
+        # If callback is configured, store chat info and return (result will arrive via callback)
+        if config.callback_base_url:
+            await db.update_generation_callback_info(
+                gen_id, message.chat.id, status_msg.message_id
+            )
+            logger.info(f"Generation {gen_id} submitted with callback, task_id={task_id}")
             await state.clear()
             return
 
-        # Extract audio URLs
+        # Fallback: polling for completion
+        songs = await client.wait_for_completion(task_id)
+
+        # Extract audio URLs from sunoData (camelCase keys)
         audio_urls = []
         for s in songs:
-            url = s.get("audio_url") or s.get("song_url") or s.get("url", "")
+            url = s.get("audioUrl") or s.get("streamAudioUrl") or s.get("audio_url", "")
             audio_urls.append(url)
 
         # Deduct credit
@@ -418,7 +426,7 @@ async def cb_download(callback: CallbackQuery):
             resp.raise_for_status()
             audio_data = resp.content
 
-        title = gen.get("prompt", "Suno Track")[:60]
+        title = gen.get("prompt", "AI Melody Track")[:60]
         audio_file = BufferedInputFile(
             audio_data,
             filename=f"{title}.mp3",
@@ -427,7 +435,7 @@ async def cb_download(callback: CallbackQuery):
             audio_file,
             caption=DOWNLOAD_SUCCESS,
             title=title,
-            performer="Suno AI",
+            performer="AI Melody",
         )
         await callback.answer("✅ Скачано!")
     except Exception as e:
@@ -490,13 +498,24 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             instrumental=(data.get("mode") == "instrumental"),
         )
 
-        song_ids = result["song_ids"]
-        await db.update_generation_status(gen_id_new, "processing", suno_song_ids=song_ids)
-        songs = await client.wait_for_completion(song_ids)
+        task_id = result["task_id"]
+        await db.update_generation_status(gen_id_new, "processing", suno_song_ids=[task_id])
+
+        # If callback is configured, store chat info and return
+        if config.callback_base_url:
+            await db.update_generation_callback_info(
+                gen_id_new, callback.message.chat.id, msg.message_id
+            )
+            logger.info(f"Regen {gen_id_new} submitted with callback, task_id={task_id}")
+            await state.clear()
+            return
+
+        # Fallback: polling
+        songs = await client.wait_for_completion(task_id)
 
         audio_urls = []
         for s in songs:
-            url = s.get("audio_url") or s.get("song_url") or s.get("url", "")
+            url = s.get("audioUrl") or s.get("streamAudioUrl") or s.get("audio_url", "")
             audio_urls.append(url)
 
         # Deduct credit

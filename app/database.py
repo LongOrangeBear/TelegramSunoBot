@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS generations (
     tg_file_ids   TEXT[],
     credits_spent INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
+    callback_chat_id  BIGINT,
+    callback_message_id BIGINT,
     created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
     completed_at  TIMESTAMP
 );
@@ -161,6 +163,25 @@ async def create_generation(user_id: int, prompt: str, style: str,
         return row["id"]
 
 
+async def update_generation_callback_info(gen_id: int, chat_id: int, message_id: int):
+    """Store chat_id and message_id for async callback delivery."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE generations SET callback_chat_id = $2, callback_message_id = $3 WHERE id = $1",
+            gen_id, chat_id, message_id,
+        )
+
+
+async def get_generation_by_task_id(task_id: str) -> dict | None:
+    """Find a generation by its Suno task_id (stored in suno_song_ids array)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM generations WHERE $1 = ANY(suno_song_ids) ORDER BY created_at DESC LIMIT 1",
+            task_id,
+        )
+        return dict(row) if row else None
+
+
 async def update_generation_status(gen_id: int, status: str, **kwargs):
     """Update generation status and optional fields."""
     sets = ["status = $2"]
@@ -248,3 +269,92 @@ async def create_payment(user_id: int, tg_payment_id: str, stars: int, credits: 
             user_id, credits,
         )
         return row["id"]
+
+
+# ─── Admin panel queries ───
+
+async def admin_get_stats() -> dict:
+    """Dashboard statistics."""
+    async with pool.acquire() as conn:
+        users_count = await conn.fetchval("SELECT COUNT(*) FROM users")
+        gens_count = await conn.fetchval("SELECT COUNT(*) FROM generations")
+        gens_complete = await conn.fetchval("SELECT COUNT(*) FROM generations WHERE status = 'complete'")
+        gens_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM generations WHERE created_at >= CURRENT_DATE"
+        )
+        payments_count = await conn.fetchval("SELECT COUNT(*) FROM payments")
+        total_stars = await conn.fetchval("SELECT COALESCE(SUM(stars_amount), 0) FROM payments")
+        total_credits_sold = await conn.fetchval(
+            "SELECT COALESCE(SUM(credits_purchased), 0) FROM payments"
+        )
+        return {
+            "users_count": users_count,
+            "gens_count": gens_count,
+            "gens_complete": gens_complete,
+            "gens_today": gens_today,
+            "payments_count": payments_count,
+            "total_stars": total_stars,
+            "total_credits_sold": total_credits_sold,
+        }
+
+
+async def admin_get_users(limit: int = 100, offset: int = 0) -> list[dict]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT u.*,
+                      (SELECT COUNT(*) FROM generations g WHERE g.user_id = u.telegram_id) as gen_count,
+                      (SELECT COUNT(*) FROM payments p WHERE p.user_id = u.telegram_id) as pay_count,
+                      (SELECT COALESCE(SUM(p.stars_amount), 0) FROM payments p WHERE p.user_id = u.telegram_id) as total_stars
+               FROM users u
+               ORDER BY u.created_at DESC
+               LIMIT $1 OFFSET $2""",
+            limit, offset,
+        )
+        return [dict(r) for r in rows]
+
+
+async def admin_get_user_detail(telegram_id: int) -> dict | None:
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
+        if not user:
+            return None
+        gens = await conn.fetch(
+            """SELECT * FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50""",
+            telegram_id,
+        )
+        pays = await conn.fetch(
+            """SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50""",
+            telegram_id,
+        )
+        return {
+            "user": dict(user),
+            "generations": [dict(g) for g in gens],
+            "payments": [dict(p) for p in pays],
+        }
+
+
+async def admin_get_generations(limit: int = 100, offset: int = 0) -> list[dict]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT g.*, u.username, u.first_name
+               FROM generations g
+               LEFT JOIN users u ON g.user_id = u.telegram_id
+               ORDER BY g.created_at DESC
+               LIMIT $1 OFFSET $2""",
+            limit, offset,
+        )
+        return [dict(r) for r in rows]
+
+
+async def admin_get_payments(limit: int = 100, offset: int = 0) -> list[dict]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT p.*, u.username, u.first_name
+               FROM payments p
+               LEFT JOIN users u ON p.user_id = u.telegram_id
+               ORDER BY p.created_at DESC
+               LIMIT $1 OFFSET $2""",
+            limit, offset,
+        )
+        return [dict(r) for r in rows]
+
