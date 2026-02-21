@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Path to the .env file (project root)
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
