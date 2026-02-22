@@ -249,15 +249,8 @@ def stories_name_kb() -> InlineKeyboardMarkup:
 # ─── Balance / Buy page ───
 
 def balance_kb() -> InlineKeyboardMarkup:
-    """Balance page with tariffs, Telegram Stars, card payment, and referral."""
+    """Balance page — choose payment method."""
     builder = InlineKeyboardBuilder()
-    for pkg in config.credit_packages:
-        builder.row(
-            InlineKeyboardButton(
-                text=pkg["label"],
-                callback_data=f"buy_credits:{pkg['credits']}:{pkg['stars']}",
-            )
-        )
     builder.row(
         InlineKeyboardButton(text="⭐ Оплата Telegram Stars", callback_data="buy_stars"),
     )
