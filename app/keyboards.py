@@ -173,9 +173,9 @@ STORIES_VIBES = [
     ("🔥 В огне", "fire"),
     ("💔 Грустно", "sad"),
     ("🎉 Праздник", "party"),
-    ("🏋️ Спорт / мотивация", "sport"),
+    ("🏋️ Спорт", "sport"),
     ("☕ Уютно", "cozy"),
-    ("😎 Дерзкий вайб", "swagger"),
+    ("😎 Дерзкий", "swagger"),
     ("✨ Мечтатель", "dreamer"),
 ]
 
@@ -193,14 +193,14 @@ STORIES_VIBE_LABELS = {
 
 STORIES_MOODS = [
     ("😎 Дерзко", "bold"),
-    ("🥰 Мило / романтично", "cute"),
-    ("😂 Прикольно / с юмором", "funny"),
-    ("🌙 Мечтательно / лирично", "dreamy"),
-    ("💪 Мощно / энергично", "powerful"),
-    ("🌸 Нежно / спокойно", "gentle"),
-    ("🌆 Вечернее / атмосферное", "evening"),
-    ("😈 Провокационно", "provocative"),
-    ("🌞 Солнечно / позитивно", "sunny"),
+    ("🥰 Мило", "cute"),
+    ("😂 Прикольно", "funny"),
+    ("🌙 Лирично", "dreamy"),
+    ("💪 Энергично", "powerful"),
+    ("🌸 Нежно", "gentle"),
+    ("🌆 Вечернее", "evening"),
+    ("😈 Дерзко", "provocative"),
+    ("🌞 Позитивно", "sunny"),
 ]
 
 STORIES_MOOD_LABELS = {
@@ -241,7 +241,8 @@ def stories_mood_kb() -> InlineKeyboardMarkup:
 
 def stories_name_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="⏩ Пропустить", callback_data="st_name:skip"))
+    builder.row(InlineKeyboardButton(text="⏩ Пропустить имя", callback_data="st_name:skip"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_st_context"))
     return builder.as_markup()
 
 

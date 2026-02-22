@@ -462,13 +462,22 @@ async def on_stories_context(message: Message, state: FSMContext):
     )
 
 
+# Back to context (from name)
+@router.callback_query(F.data == "back_st_context")
+async def cb_back_st_context(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GenerationStates.stories_context)
+    await callback.message.edit_text(STORIES_ENTER_CONTEXT, parse_mode="HTML")
+    await callback.answer()
+
+
 # Step 4: Name (optional)
 @router.callback_query(F.data == "st_name:skip")
 async def cb_stories_name_skip(callback: CallbackQuery, state: FSMContext):
     """Skip name → assemble prompt and generate."""
     await state.update_data(st_name="")
     await callback.answer("⏩ Пропущено")
-    await _assemble_stories_prompt(callback.message, state)
+    # callback.message is the bot's message, so we pass user_id explicitly
+    await _assemble_stories_prompt(callback.message, state, user_id=callback.from_user.id)
 
 
 @router.message(GenerationStates.stories_name)
@@ -477,7 +486,7 @@ async def on_stories_name(message: Message, state: FSMContext):
     await _assemble_stories_prompt(message, state)
 
 
-async def _assemble_stories_prompt(message: Message, state: FSMContext):
+async def _assemble_stories_prompt(message: Message, state: FSMContext, user_id: int | None = None):
     """Assemble the stories prompt from collected data and start generation."""
     data = await state.get_data()
     vibe = data.get("st_vibe", "")
@@ -499,13 +508,14 @@ async def _assemble_stories_prompt(message: Message, state: FSMContext):
     assembled = assembled[:400]
 
     await state.update_data(prompt=assembled, mode="description")
-    await do_generate(message, state)
+    await do_generate(message, state, user_id=user_id)
 
 
-async def do_generate(message: Message, state: FSMContext):
+async def do_generate(message: Message, state: FSMContext, user_id: int | None = None):
     """Execute the generation after all inputs collected."""
     data = await state.get_data()
-    user_id = message.from_user.id
+    if user_id is None:
+        user_id = message.from_user.id
     mode = data.get("mode", "description")
     style = data.get("style", "")
     voice_gender = data.get("voice_gender")
