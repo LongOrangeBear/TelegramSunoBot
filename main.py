@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from app.config import config
 from app.database import init_db, close_db
@@ -38,6 +39,11 @@ async def on_startup(bot: Bot):
 
     me = await bot.get_me()
     logger.info(f"Bot @{me.username} started (id={me.id})")
+
+    # Set only /start in the Telegram commands menu
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Запустить бота"),
+    ])
 
 
 async def on_shutdown(bot: Bot):

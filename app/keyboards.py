@@ -13,7 +13,7 @@ from app.config import config
 
 BTN_CREATE = "🎵 Создать песню"
 BTN_BALANCE = "💰 Баланс"
-BTN_SUPPORT = "🔧 Техническая поддержка"
+BTN_TRACKS = "📚 Мои треки"
 BTN_HELP = "❓ Помощь"
 
 
@@ -24,7 +24,7 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_CREATE), KeyboardButton(text=BTN_BALANCE)],
-            [KeyboardButton(text=BTN_SUPPORT), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_TRACKS), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -129,7 +129,7 @@ def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
     )
     # Rating row
-    star_labels = ["1 ⭐", "2 ⭐", "3 ⭐", "4 ⭐", "5 ⭐"]
+    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     rating_row = []
     for i, label in enumerate(star_labels, 1):
         rating_row.append(
@@ -157,7 +157,7 @@ def rating_kb(gen_id: int) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
     )
-    star_labels = ["1 ⭐", "2 ⭐", "3 ⭐", "4 ⭐", "5 ⭐"]
+    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     rating_row = []
     for i, label in enumerate(star_labels, 1):
         rating_row.append(

@@ -12,10 +12,10 @@ from app import database as db
 from app.config import config
 from app.keyboards import (
     main_reply_kb, balance_kb, stars_kb, mode_kb,
-    BTN_CREATE, BTN_BALANCE, BTN_SUPPORT, BTN_HELP,
+    BTN_CREATE, BTN_BALANCE, BTN_TRACKS, BTN_HELP,
 )
 from app.texts import (
-    WELCOME, WELCOME_BACK, HELP, SUPPORT, PROFILE, BLOCKED,
+    WELCOME, WELCOME_BACK, HELP, PROFILE, BLOCKED,
     INVITE, INVITE_INSTRUCTIONS, REFERRAL_BONUS,
     CHOOSE_MODE, BALANCE_PAGE, BUY_STARS_HEADER,
 )
@@ -113,10 +113,11 @@ async def btn_balance(message: Message):
     await message.answer(text, parse_mode="HTML", reply_markup=balance_kb())
 
 
-@router.message(F.text == BTN_SUPPORT)
-async def btn_support(message: Message):
-    """Handle 'Техническая поддержка' reply button."""
-    await message.answer(SUPPORT, parse_mode="HTML")
+@router.message(F.text == BTN_TRACKS)
+async def btn_tracks(message: Message):
+    """Handle 'Мои треки' reply button."""
+    from app.handlers.generation import show_history
+    await show_history(message)
 
 
 @router.message(F.text == BTN_HELP)

@@ -120,15 +120,11 @@ async def cb_mode(callback: CallbackQuery, state: FSMContext):
     mode = callback.data.split(":")[1]
 
     if mode == "lyrics":
-        # Lyrics mode — go directly to entering lyrics
         await state.update_data(mode="lyrics")
-        await state.set_state(GenerationStates.entering_prompt)
-        await callback.message.edit_text(ENTER_LYRICS, parse_mode="HTML")
-        await callback.answer()
-        return
+    else:
+        await state.update_data(mode="description")
 
-    # Idea mode — go to gender selection
-    await state.update_data(mode="description")
+    # Both modes go through gender → style → text input
     await state.set_state(GenerationStates.choosing_gender)
     await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
     await callback.answer()
@@ -173,16 +169,22 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
         return
 
     await state.update_data(style=style)
+    data = await state.get_data()
     await state.set_state(GenerationStates.entering_prompt)
-    await callback.message.edit_text(ENTER_PROMPT, parse_mode="HTML")
+    # Show mode-appropriate prompt
+    text = ENTER_LYRICS if data.get("mode") == "lyrics" else ENTER_PROMPT
+    await callback.message.edit_text(text, parse_mode="HTML")
     await callback.answer()
 
 
 @router.message(GenerationStates.entering_custom_style)
 async def on_custom_style(message: Message, state: FSMContext):
     await state.update_data(style=message.text.strip())
+    data = await state.get_data()
     await state.set_state(GenerationStates.entering_prompt)
-    await message.answer(ENTER_PROMPT, parse_mode="HTML")
+    # Show mode-appropriate prompt
+    text = ENTER_LYRICS if data.get("mode") == "lyrics" else ENTER_PROMPT
+    await message.answer(text, parse_mode="HTML")
 
 
 # ─── Text input ───
@@ -216,14 +218,24 @@ async def do_generate(message: Message, state: FSMContext):
 
     await state.set_state(GenerationStates.generating)
 
-    # Apply Russian language prefix if enabled
+    # Apply Russian language prefix only for description mode
     api_prompt = prompt
-    if config.russian_language_prefix:
+    if mode != "lyrics" and config.russian_language_prefix:
         api_prompt = f"песня на русском языке. {prompt}"
 
+    if mode == "lyrics":
+        status_text = (
+            "🎵 Отлично! Создаю музыку по твоим стихам...\n"
+            "Мне нужно 1-2 минуты."
+        )
+    else:
+        status_text = (
+            "🎵 Отлично! Работаю над стихами и мелодией по твоей идее...\n"
+            "Мне нужно 1 минуту."
+        )
+
     status_msg = await message.answer(
-        "🎵 Отлично! Работаю над стихами и мелодией по твоей идее...\n"
-        "Мне нужно 1 минуту.",
+        status_text,
         parse_mode="HTML",
         reply_markup=main_reply_kb(),
     )
@@ -245,14 +257,25 @@ async def do_generate(message: Message, state: FSMContext):
             except Exception:
                 pass
 
-        result = await client.generate(
-            prompt=api_prompt,
-            style=style,
-            voice_gender=voice_gender,
-            mode=mode,
-            instrumental=False,
-            on_lyrics_ready=on_lyrics_ready,
-        )
+        # For lyrics mode: use custom mode and pass user's text as lyrics
+        if mode == "lyrics":
+            result = await client.generate(
+                prompt=prompt,
+                style=style,
+                voice_gender=voice_gender,
+                mode="custom",
+                lyrics=prompt,
+                instrumental=False,
+            )
+        else:
+            result = await client.generate(
+                prompt=api_prompt,
+                style=style,
+                voice_gender=voice_gender,
+                mode=mode,
+                instrumental=False,
+                on_lyrics_ready=on_lyrics_ready,
+            )
 
         task_id = result["task_id"]
         await db.update_generation_status(gen_id, "processing", suno_song_ids=[task_id])
@@ -518,14 +541,25 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             except Exception:
                 pass
 
-        result = await client.generate(
-            prompt=data.get("prompt", ""),
-            style=data.get("style", ""),
-            voice_gender=data.get("voice_gender"),
-            mode=data.get("mode", "description"),
-            instrumental=False,
-            on_lyrics_ready=on_lyrics_ready,
-        )
+        regen_mode = data.get("mode", "description")
+        if regen_mode == "lyrics":
+            result = await client.generate(
+                prompt=data.get("prompt", ""),
+                style=data.get("style", ""),
+                voice_gender=data.get("voice_gender"),
+                mode="custom",
+                lyrics=data.get("prompt", ""),
+                instrumental=False,
+            )
+        else:
+            result = await client.generate(
+                prompt=data.get("prompt", ""),
+                style=data.get("style", ""),
+                voice_gender=data.get("voice_gender"),
+                mode=regen_mode,
+                instrumental=False,
+                on_lyrics_ready=on_lyrics_ready,
+            )
 
         task_id = result["task_id"]
         await db.update_generation_status(gen_id_new, "processing", suno_song_ids=[task_id])
@@ -630,34 +664,62 @@ async def show_history(message: Message):
         await message.answer(HISTORY_EMPTY, parse_mode="HTML")
         return
 
-    lines = [HISTORY_HEADER]
-    for i, g in enumerate(gens, 1):
-        date = g["created_at"].strftime("%d.%m %H:%M")
-        style = g.get("style", "")
-        prompt = (g.get("prompt", "")[:40] + "...") if len(g.get("prompt", "")) > 40 else g.get("prompt", "")
-        rating = f" ⭐{g.get('rating', '')}" if g.get("rating") else ""
-        lines.append(f"\n{i}. 🎵 <i>{prompt}</i>{rating}")
-        lines.append(f"   📅 {date} | 🎼 {style}")
+    total = len(gens)
+    await message.answer(
+        f"📚 <b>Ваши треки</b> (последние {total}):",
+        parse_mode="HTML",
+    )
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    for i, g in enumerate(gens):
+        gen_id = g["id"]
+        date = g["created_at"].strftime("%d.%m.%Y %H:%M")
+        style = g.get("style", "—")
+        prompt = g.get("prompt", "")
+        prompt_short = (prompt[:60] + "...") if len(prompt) > 60 else prompt
+        rating = f"  ⭐ {g['rating']}/5" if g.get("rating") else ""
+        mode_label = "📝 Стихи" if g.get("mode") == "lyrics" else "💡 Идея"
+
+        caption = (
+            f"🎵 <b>{prompt_short}</b>\n"
+            f"{mode_label} • 🎼 {style}{rating}\n"
+            f"📅 {date}"
+        )
+
+        audio_urls = g.get("audio_urls") or []
+        sent_audio = False
+
+        for idx, url in enumerate(audio_urls[:2]):
+            if not url:
+                continue
+            try:
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(url, timeout=30.0)
+                    resp.raise_for_status()
+                    audio_data = resp.content
+
+                title = (prompt[:50] or f"Трек {i+1}") + (f" (вар. {idx+1})" if len(audio_urls) > 1 else "")
+                audio_file = BufferedInputFile(
+                    audio_data,
+                    filename=f"{title}.mp3",
+                )
+                await message.answer_audio(
+                    audio_file,
+                    caption=caption if idx == 0 else None,
+                    parse_mode="HTML",
+                    title=title,
+                    performer="AI Melody",
+                    reply_markup=track_kb(gen_id, idx),
+                )
+                sent_audio = True
+            except Exception as e:
+                logger.warning(f"History: failed to send audio {gen_id}/{idx}: {e}")
+
+        # Fallback: text-only if audio not available
+        if not sent_audio:
+            await message.answer(caption, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "history")
 async def cb_history(callback: CallbackQuery):
-    gens = await db.get_user_generations(callback.from_user.id, limit=10)
-    if not gens:
-        await callback.message.answer(HISTORY_EMPTY, parse_mode="HTML")
-        await callback.answer()
-        return
-
-    lines = [HISTORY_HEADER]
-    for i, g in enumerate(gens, 1):
-        date = g["created_at"].strftime("%d.%m %H:%M")
-        style = g.get("style", "")
-        prompt = (g.get("prompt", "")[:40] + "...") if len(g.get("prompt", "")) > 40 else g.get("prompt", "")
-        rating = f" ⭐{g.get('rating', '')}" if g.get("rating") else ""
-        lines.append(f"\n{i}. 🎵 <i>{prompt}</i>{rating}")
-        lines.append(f"   📅 {date} | 🎼 {style}")
-
-    await callback.message.answer("\n".join(lines), parse_mode="HTML")
     await callback.answer()
+    await show_history(callback.message)
