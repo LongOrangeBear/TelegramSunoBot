@@ -37,6 +37,7 @@ bot_instance: Bot | None = None
 bot_start_time: datetime | None = None
 
 
+
 async def on_startup(bot: Bot):
     global bot_start_time
     bot_start_time = datetime.now(timezone.utc)
