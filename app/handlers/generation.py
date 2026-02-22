@@ -19,7 +19,7 @@ from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
 from app.texts import (
     CHOOSE_MODE, CHOOSE_GENDER, CHOOSE_STYLE,
     ENTER_PROMPT, ENTER_LYRICS, ENTER_CUSTOM_STYLE,
-    GENERATING, GENERATING_MUSIC, GENERATION_COMPLETE, GENERATION_ERROR,
+    GENERATING, GENERATION_COMPLETE, GENERATION_ERROR,
     CONTENT_VIOLATION, NO_CREDITS, BLOCKED,
     RATE_LIMIT_USER, RATE_LIMIT_GLOBAL,
     HISTORY_EMPTY, HISTORY_HEADER, DOWNLOAD_SUCCESS, DOWNLOAD_NO_CREDITS,
@@ -179,7 +179,8 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
 
 @router.message(GenerationStates.entering_custom_style)
 async def on_custom_style(message: Message, state: FSMContext):
-    await state.update_data(style=message.text.strip())
+    custom_style = message.text.strip()[:90]
+    await state.update_data(style=custom_style)
     data = await state.get_data()
     await state.set_state(GenerationStates.entering_prompt)
     # Show mode-appropriate prompt
@@ -191,7 +192,15 @@ async def on_custom_style(message: Message, state: FSMContext):
 
 @router.message(GenerationStates.entering_prompt)
 async def on_prompt(message: Message, state: FSMContext):
-    await state.update_data(prompt=message.text.strip())
+    data = await state.get_data()
+    mode = data.get("mode", "description")
+    text = message.text.strip()
+
+    # For description mode, limit to 400 chars
+    if mode != "lyrics":
+        text = text[:400]
+
+    await state.update_data(prompt=text)
     await do_generate(message, state)
 
 
@@ -217,11 +226,6 @@ async def do_generate(message: Message, state: FSMContext):
         return
 
     await state.set_state(GenerationStates.generating)
-
-    # Apply Russian language prefix only for description mode
-    api_prompt = prompt
-    if mode != "lyrics" and config.russian_language_prefix:
-        api_prompt = f"песня на русском языке. {prompt}"
 
     if mode == "lyrics":
         status_text = (
@@ -251,12 +255,6 @@ async def do_generate(message: Message, state: FSMContext):
     try:
         client = get_suno_client()
 
-        async def on_lyrics_ready(lyrics_text, lyrics_title):
-            try:
-                await status_msg.edit_text(GENERATING_MUSIC, parse_mode="HTML")
-            except Exception:
-                pass
-
         # For lyrics mode: use custom mode and pass user's text as lyrics
         if mode == "lyrics":
             result = await client.generate(
@@ -268,13 +266,22 @@ async def do_generate(message: Message, state: FSMContext):
                 instrumental=False,
             )
         else:
+            # Description mode: non-custom, build single prompt
+            # Format: "{gender} vocal, {style}. песня на русском языке. {description}"
+            parts = []
+            if voice_gender:
+                parts.append(f"{voice_gender} vocal")
+            if style:
+                parts.append(style)
+            if config.russian_language_prefix:
+                parts.append("песня на русском языке")
+            parts.append(prompt)
+            api_prompt = ". ".join(parts)
+
             result = await client.generate(
                 prompt=api_prompt,
-                style=style,
-                voice_gender=voice_gender,
-                mode=mode,
+                mode="description",
                 instrumental=False,
-                on_lyrics_ready=on_lyrics_ready,
             )
 
         task_id = result["task_id"]
@@ -383,20 +390,29 @@ async def do_generate(message: Message, state: FSMContext):
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)
         await db.update_generation_status(gen_id, "error", error_message="content_policy")
-        await status_msg.edit_text(
-            CONTENT_VIOLATION.format(count=count),
-            parse_mode="HTML",
-        )
+        try:
+            await status_msg.edit_text(
+                CONTENT_VIOLATION.format(count=count),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
     except SunoApiError as e:
         logger.error(f"Suno API error for gen {gen_id}: {e}")
         await db.update_generation_status(gen_id, "error", error_message=str(e))
-        await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        try:
+            await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        except Exception:
+            pass
 
     except Exception as e:
         logger.error(f"Unexpected error for gen {gen_id}: {e}", exc_info=True)
         await db.update_generation_status(gen_id, "error", error_message=str(e))
-        await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        try:
+            await status_msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        except Exception:
+            pass
 
     finally:
         await state.clear()
@@ -554,12 +570,6 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
     try:
         client = get_suno_client()
 
-        async def on_lyrics_ready(lyrics_text, lyrics_title):
-            try:
-                await msg.edit_text(GENERATING_MUSIC, parse_mode="HTML")
-            except Exception:
-                pass
-
         regen_mode = data.get("mode", "description")
         if regen_mode == "lyrics":
             result = await client.generate(
@@ -571,13 +581,23 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
                 instrumental=False,
             )
         else:
+            # Description mode: non-custom, build single prompt
+            parts = []
+            regen_gender = data.get("voice_gender")
+            regen_style = data.get("style", "")
+            if regen_gender:
+                parts.append(f"{regen_gender} vocal")
+            if regen_style:
+                parts.append(regen_style)
+            if config.russian_language_prefix:
+                parts.append("песня на русском языке")
+            parts.append(data.get("prompt", ""))
+            api_prompt = ". ".join(parts)
+
             result = await client.generate(
-                prompt=data.get("prompt", ""),
-                style=data.get("style", ""),
-                voice_gender=data.get("voice_gender"),
-                mode=regen_mode,
+                prompt=api_prompt,
+                mode="description",
                 instrumental=False,
-                on_lyrics_ready=on_lyrics_ready,
             )
 
         task_id = result["task_id"]
@@ -679,17 +699,26 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)
         await db.update_generation_status(gen_id_new, "error", error_message="content_policy")
-        await msg.edit_text(
-            CONTENT_VIOLATION.format(count=count),
-            parse_mode="HTML",
-        )
+        try:
+            await msg.edit_text(
+                CONTENT_VIOLATION.format(count=count),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
     except SunoApiError as e:
         logger.error(f"Regen API error: {e}")
         await db.update_generation_status(gen_id_new, "error", error_message=str(e))
-        await msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        try:
+            await msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Regen unexpected error: {e}", exc_info=True)
-        await msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        try:
+            await msg.edit_text(GENERATION_ERROR, parse_mode="HTML")
+        except Exception:
+            pass
     finally:
         await state.clear()
 

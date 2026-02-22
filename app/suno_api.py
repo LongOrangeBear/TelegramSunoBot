@@ -141,17 +141,14 @@ class SunoClient:
         mode: str = "description",
         lyrics: Optional[str] = None,
         instrumental: bool = False,
-        on_lyrics_ready: Optional[callable] = None,
     ) -> dict:
         """
         Start a song generation via v1 API.
 
-        In description mode, first generates lyrics from the description,
-        then uses those lyrics in custom mode for music generation.
+        In description mode, uses non-custom mode (customMode=false) with a single
+        prompt (up to 500 chars). Suno auto-generates lyrics and music.
 
-        Args:
-            on_lyrics_ready: optional async callback called when lyrics are generated
-                             (for updating user-facing status messages)
+        In custom/lyrics mode, uses customMode=true with separate style and prompt fields.
 
         Returns:
             dict with task_id for polling
@@ -164,11 +161,11 @@ class SunoClient:
         if mode == "custom" and lyrics:
             # Custom mode: customMode=true, prompt=lyrics, style & title required
             payload = {
-                "prompt": lyrics,
+                "prompt": lyrics[:5000],
                 "customMode": True,
                 "instrumental": False,
                 "model": config.suno_model,
-                "style": full_style or "Pop",
+                "style": (full_style or "Pop")[:1000],
                 "title": (prompt[:77] + "..." if len(prompt) > 80 else prompt) if prompt else "Untitled",
             }
         elif mode == "instrumental":
@@ -180,32 +177,14 @@ class SunoClient:
                 "model": config.suno_model,
             }
         else:
-            # Description mode: two-step generation
-            # Step 1: Generate lyrics from user's description
-            logger.info(f"Description mode: generating lyrics from description...")
-            lyrics_result = await self.generate_lyrics(prompt)
-            lyrics_data = await self.wait_for_lyrics(lyrics_result["task_id"])
-
-            generated_lyrics = lyrics_data["text"]
-            generated_title = lyrics_data["title"]
-
-            logger.info(f"Lyrics ready, title='{generated_title}', generating music...")
-
-            # Notify caller that lyrics are ready (for UI updates)
-            if on_lyrics_ready:
-                try:
-                    await on_lyrics_ready(generated_lyrics, generated_title)
-                except Exception as e:
-                    logger.warning(f"on_lyrics_ready callback error: {e}")
-
-            # Step 2: Use generated lyrics in custom mode
+            # Description mode: non-custom, single prompt (up to 500 chars)
+            # Suno auto-generates lyrics and music from the description
+            logger.info(f"Description mode: non-custom, single prompt")
             payload = {
-                "customMode": True,
+                "prompt": prompt[:500],
+                "customMode": False,
                 "instrumental": False,
                 "model": config.suno_model,
-                "prompt": generated_lyrics[:5000],
-                "style": full_style[:1000] if full_style else "Pop",
-                "title": generated_title[:80],
             }
 
         # Add callback URL if configured
