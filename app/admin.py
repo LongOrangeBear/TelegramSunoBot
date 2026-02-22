@@ -404,6 +404,9 @@ async def dashboard(request: web.Request):
     elif success == "russian_prefix":
         status = "включен" if config.russian_language_prefix else "выключен"
         success_html = f'<span class="success-msg">✅ Префикс русского языка {status}</span>'
+    elif success == "video_generation":
+        status = "включена" if config.video_generation_enabled else "выключена"
+        success_html = f'<span class="success-msg">✅ Генерация видео {status}</span>'
 
     content = f"""
     <h1>📊 Дашборд</h1>
@@ -501,6 +504,16 @@ async def dashboard(request: web.Request):
                     </form>
                 </td>
                 <td>Добавляет "песня на русском языке" в начало описания для Suno API</td>
+            </tr>
+            <tr>
+                <td>🎬 Генерация видео</td>
+                <td>
+                    <form method="POST" action="/admin/toggle_video_generation?{tp}" class="admin-form">
+                        <span class="badge {'badge-ok' if config.video_generation_enabled else 'badge-warn'}">{'ВКЛ' if config.video_generation_enabled else 'ВЫКЛ'}</span>
+                        <button type="submit" class="admin-btn">{"Выключить" if config.video_generation_enabled else "Включить"}</button>
+                    </form>
+                </td>
+                <td>Генерирует MP4 видеоклип после создания аудио (доп. расход кредитов API)</td>
             </tr>
         </tbody>
     </table>
@@ -942,6 +955,17 @@ async def toggle_russian_prefix(request: web.Request):
     raise web.HTTPFound(f"/admin/?{tp}&success=russian_prefix")
 
 
+@auth_required
+async def toggle_video_generation(request: web.Request):
+    """Toggle automatic video (MP4) generation after audio."""
+    tp = token_param(request)
+    new_value = not config.video_generation_enabled
+    config.video_generation_enabled = new_value
+    persist_env_var("VIDEO_GENERATION_ENABLED", "1" if new_value else "0")
+    logger.info(f"Admin toggled video_generation_enabled to {new_value}")
+    raise web.HTTPFound(f"/admin/?{tp}&success=video_generation")
+
+
 # ─── App factory ───
 
 def create_admin_app() -> web.Application:
@@ -952,6 +976,7 @@ def create_admin_app() -> web.Application:
     app.router.add_post("/admin/set_free_credits", set_free_credits)
     app.router.add_post("/admin/set_daily_limit", set_daily_limit)
     app.router.add_post("/admin/toggle_russian_prefix", toggle_russian_prefix)
+    app.router.add_post("/admin/toggle_video_generation", toggle_video_generation)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
     app.router.add_post("/admin/user/{id}/credit", credit_user)

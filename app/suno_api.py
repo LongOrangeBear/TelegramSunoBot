@@ -303,6 +303,95 @@ class SunoClient:
         logger.warning(f"Generation timeout for task: {task_id}")
         raise SunoApiError(f"Generation timeout after {timeout}s for task {task_id}")
 
+    # ─── Video (MP4) generation ───
+
+    async def generate_video(self, task_id: str, audio_id: str) -> dict:
+        """
+        Start MP4 video generation for a completed audio track.
+
+        Args:
+            task_id: the original music generation task ID
+            audio_id: the specific song ID from sunoData
+
+        Returns:
+            dict with task_id for polling video status
+        """
+        payload = {
+            "taskId": task_id,
+            "audioId": audio_id,
+        }
+
+        if config.callback_base_url:
+            payload["callBackUrl"] = f"{config.callback_base_url.rstrip('/')}/callback/video"
+
+        logger.info(f"Video generation request: /api/v1/mp4/generate | {payload}")
+
+        try:
+            response = await self.client.post("/api/v1/mp4/generate", json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("code") != 200:
+                msg = result.get("msg", "Unknown error")
+                raise SunoApiError(f"Video API error: {msg}")
+
+            video_task_id = result.get("data", {}).get("taskId")
+            if not video_task_id:
+                raise SunoApiError(f"No taskId in video response: {result}")
+
+            return {"task_id": video_task_id}
+
+        except httpx.HTTPStatusError as e:
+            raise SunoApiError(f"Video API error {e.response.status_code}: {e.response.text}")
+        except httpx.RequestError as e:
+            raise SunoApiError(f"Video request failed: {e}")
+
+    async def wait_for_video(
+        self, task_id: str, timeout: int = 300, poll_interval: int = 10
+    ) -> str:
+        """
+        Poll until video generation is complete.
+
+        Returns:
+            videoUrl string
+        """
+        start_time = asyncio.get_event_loop().time()
+        await asyncio.sleep(5)
+
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            try:
+                response = await self.client.get(
+                    f"/api/v1/mp4/record-info?taskId={task_id}"
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                if result.get("code") != 200:
+                    raise SunoApiError(f"Video status check failed: {result.get('msg')}")
+
+                data = result.get("data", {})
+                status = data.get("status", "")
+
+                logger.info(f"Video task {task_id} status: {status}")
+
+                if status in ("SUCCESS", "FIRST_SUCCESS"):
+                    response_data = data.get("response", {})
+                    video_url = response_data.get("videoUrl", "")
+                    if video_url:
+                        return video_url
+                    raise SunoApiError(f"No videoUrl in successful video response: {data}")
+
+                elif status in ("CREATE_TASK_FAILED", "GENERATE_VIDEO_FAILED", "CALLBACK_EXCEPTION"):
+                    error_msg = data.get("errorMessage", f"Video generation failed: {status}")
+                    raise SunoApiError(error_msg)
+
+            except httpx.HTTPStatusError as e:
+                raise SunoApiError(f"Video status error {e.response.status_code}: {e.response.text}")
+
+            await asyncio.sleep(poll_interval)
+
+        raise SunoApiError(f"Video generation timeout after {timeout}s")
+
 
 # Global client instance
 suno_client: SunoClient | None = None

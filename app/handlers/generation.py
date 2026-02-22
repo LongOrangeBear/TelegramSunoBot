@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from app import database as db
 from app.config import config
 from app.keyboards import (
-    mode_kb, gender_kb, style_kb, track_kb, after_generation_kb,
+    mode_kb, gender_kb, style_kb, track_kb, history_track_kb, after_generation_kb,
     main_reply_kb,
 )
 from app.states import GenerationStates
@@ -293,11 +293,13 @@ async def do_generate(message: Message, state: FSMContext):
         audio_urls = []
         image_urls = []
         song_titles = []
+        song_ids = []
         for s in songs:
             url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
             image_urls.append(s.get("imageUrl") or s.get("image_url", ""))
             song_titles.append(s.get("title", f"AI Melody Track"))
+            song_ids.append(s.get("id", ""))
 
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
@@ -360,6 +362,23 @@ async def do_generate(message: Message, state: FSMContext):
             parse_mode="HTML",
             reply_markup=after_generation_kb(gen_id),
         )
+
+        # Video generation (if enabled)
+        if config.video_generation_enabled:
+            for i, url in enumerate(audio_urls[:2]):
+                if not url or not song_ids[i]:
+                    continue
+                try:
+                    title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+                    video_result = await client.generate_video(task_id, song_ids[i])
+                    video_url = await client.wait_for_video(video_result["task_id"])
+                    await message.answer_video(
+                        video=video_url,
+                        caption=f"🎬 Видеоклип: <b>{title}</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    logger.warning(f"Video generation failed for track {i}: {e}")
 
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)
@@ -577,11 +596,13 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         audio_urls = []
         image_urls = []
         song_titles = []
+        song_ids = []
         for s in songs:
             url = s.get("audioUrl") or s.get("streamAudioUrl", "")
             audio_urls.append(url)
             image_urls.append(s.get("imageUrl") or s.get("image_url", ""))
             song_titles.append(s.get("title", f"AI Melody Track"))
+            song_ids.append(s.get("id", ""))
 
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
@@ -637,6 +658,23 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML",
             reply_markup=after_generation_kb(gen_id_new),
         )
+
+        # Video generation (if enabled)
+        if config.video_generation_enabled:
+            for i, url in enumerate(audio_urls[:2]):
+                if not url or not song_ids[i]:
+                    continue
+                try:
+                    title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+                    video_result = await client.generate_video(task_id, song_ids[i])
+                    video_url = await client.wait_for_video(video_result["task_id"])
+                    await callback.message.answer_video(
+                        video=video_url,
+                        caption=f"🎬 Видеоклип: <b>{title}</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    logger.warning(f"Regen video generation failed for track {i}: {e}")
 
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)
@@ -708,7 +746,7 @@ async def show_history(message: Message):
                     parse_mode="HTML",
                     title=title,
                     performer="AI Melody",
-                    reply_markup=track_kb(gen_id, idx),
+                    reply_markup=history_track_kb(gen_id, idx),
                 )
                 sent_audio = True
             except Exception as e:

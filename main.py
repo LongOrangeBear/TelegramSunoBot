@@ -40,9 +40,9 @@ async def on_startup(bot: Bot):
     me = await bot.get_me()
     logger.info(f"Bot @{me.username} started (id={me.id})")
 
-    # Set only /start in the Telegram commands menu
+    # Set only /start in the Telegram commands menu (removes old BotFather commands)
     await bot.set_my_commands([
-        BotCommand(command="start", description="Запустить бота"),
+        BotCommand(command="start", description="Начать"),
     ])
 
 

@@ -7,7 +7,9 @@ import httpx
 from aiohttp import web
 
 from app import database as db
+from app.config import config
 from app.keyboards import track_kb, after_generation_kb
+from app.suno_api import get_suno_client
 from app.texts import GENERATION_COMPLETE, GENERATION_ERROR
 
 logger = logging.getLogger(__name__)
@@ -86,11 +88,13 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
         audio_urls = []
         image_urls = []
         song_titles = []
+        song_ids = []
         for s in suno_data:
             url = s.get("audio_url") or s.get("stream_audio_url", "")
             audio_urls.append(url)
             image_urls.append(s.get("image_url", ""))
             song_titles.append(s.get("title", "AI Melody Track"))
+            song_ids.append(s.get("id", ""))
 
         if not audio_urls:
             logger.warning(f"Callback: no audio URLs in data for task_id={task_id}")
@@ -114,7 +118,7 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
         # Send result to user via bot asynchronously (don't block the 200 response)
         if bot and gen.get("callback_chat_id"):
             asyncio.create_task(
-                _deliver_result_to_user(bot, gen, gen_id, audio_urls, image_urls, song_titles)
+                _deliver_result_to_user(bot, gen, gen_id, audio_urls, image_urls, song_titles, song_ids, task_id)
             )
 
         logger.info(f"Callback: generation {gen_id} completed with {len(audio_urls)} tracks")
@@ -140,6 +144,7 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
 async def _deliver_result_to_user(
     bot, gen: dict, gen_id: int,
     audio_urls: list[str], image_urls: list[str], song_titles: list[str],
+    song_ids: list[str] = None, original_task_id: str = "",
 ):
     """Send generation results to the user in Telegram — SoNata-style (runs as background task)."""
     chat_id = gen["callback_chat_id"]
@@ -202,6 +207,28 @@ async def _deliver_result_to_user(
             parse_mode="HTML",
             reply_markup=after_generation_kb(gen_id),
         )
+
+        # Video generation (if enabled)
+        if config.video_generation_enabled and original_task_id and song_ids:
+            try:
+                client = get_suno_client()
+                for i, url in enumerate(audio_urls[:2]):
+                    if not url or i >= len(song_ids) or not song_ids[i]:
+                        continue
+                    try:
+                        title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+                        video_result = await client.generate_video(original_task_id, song_ids[i])
+                        video_url = await client.wait_for_video(video_result["task_id"])
+                        await bot.send_video(
+                            chat_id=chat_id,
+                            video=video_url,
+                            caption=f"🎬 Видеоклип: <b>{title}</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Callback: video generation failed for track {i}: {e}")
+            except Exception as e:
+                logger.warning(f"Callback: video generation error: {e}")
 
     except Exception as e:
         logger.error(f"Callback: error sending results to user: {e}")

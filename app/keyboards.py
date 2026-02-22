@@ -139,6 +139,15 @@ def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def history_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
+    """Per-track keyboard for history: share only (no rating)."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
+    )
+    return builder.as_markup()
+
+
 def after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
     """Keyboard shown after all tracks: regenerate + create another."""
     builder = InlineKeyboardBuilder()

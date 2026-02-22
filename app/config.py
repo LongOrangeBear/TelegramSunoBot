@@ -74,6 +74,9 @@ class Config:
     # Russian language prefix in Suno prompts
     russian_language_prefix: bool = os.getenv("RUSSIAN_LANGUAGE_PREFIX", "1") == "1"
 
+    # Video generation (MP4) after audio is ready
+    video_generation_enabled: bool = os.getenv("VIDEO_GENERATION_ENABLED", "0") == "1"
+
     # Admin panel
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     admin_port: int = int(os.getenv("ADMIN_PORT", "8080"))
