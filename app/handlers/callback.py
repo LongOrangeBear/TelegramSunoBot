@@ -14,6 +14,19 @@ from app.texts import GENERATION_COMPLETE, GENERATION_ERROR
 
 logger = logging.getLogger(__name__)
 
+# In-memory store: video_task_id → {chat_id, title, bot_getter}
+_pending_video_tasks: dict[str, dict] = {}
+
+
+def register_video_task(video_task_id: str, chat_id: int, title: str, get_bot):
+    """Register context for a pending video task so the callback can deliver it."""
+    _pending_video_tasks[video_task_id] = {
+        "chat_id": chat_id,
+        "title": title,
+        "get_bot": get_bot,
+    }
+    logger.info(f"Registered pending video task {video_task_id} for chat_id={chat_id}")
+
 
 async def handle_suno_callback(request: web.Request) -> web.Response:
     """
@@ -141,6 +154,69 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
+async def handle_video_callback(request: web.Request) -> web.Response:
+    """
+    Receive callback POST from SunoAPI.org when a video (MP4) task finishes.
+
+    Expected payload (per API docs):
+    Success: {"code": 200, "msg": "MP4 generated successfully.", "data": {"task_id": "...", "video_url": "..."}}
+    Failure: {"code": 400/451/500, "msg": "..."}
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        logger.warning("Video callback: invalid JSON body")
+        return web.json_response({"status": "error", "msg": "invalid json"}, status=400)
+
+    code = payload.get("code")
+    data = payload.get("data", {})
+    task_id = data.get("task_id", "") if isinstance(data, dict) else ""
+    msg = payload.get("msg", "")
+
+    logger.info(f"Video callback received: code={code}, task_id={task_id}, msg={msg}, data={data}")
+
+    if not task_id:
+        logger.warning(f"Video callback: no task_id in payload: {payload}")
+        return web.json_response({"status": "ok"})
+
+    # Look up pending context
+    ctx = _pending_video_tasks.pop(task_id, None)
+    if not ctx:
+        logger.warning(f"Video callback: no pending task for task_id={task_id}")
+        return web.json_response({"status": "ok"})
+
+    chat_id = ctx["chat_id"]
+    title = ctx["title"]
+    get_bot = ctx["get_bot"]
+    bot = get_bot() if get_bot else None
+
+    if code == 200:
+        video_url = data.get("video_url", "")
+        if video_url and bot:
+            # Send video asynchronously (don't block the 200 response)
+            asyncio.create_task(_deliver_video(bot, chat_id, video_url, title))
+        elif not video_url:
+            logger.warning(f"Video callback: success but no video_url in data: {data}")
+    else:
+        logger.warning(f"Video callback: failed for task_id={task_id}, code={code}, msg={msg}")
+
+    return web.json_response({"status": "ok"})
+
+
+async def _deliver_video(bot, chat_id: int, video_url: str, title: str):
+    """Send a generated video to the user (runs as background task)."""
+    try:
+        await bot.send_video(
+            chat_id=chat_id,
+            video=video_url,
+            caption=f"🎬 Видеоклип: <b>{title}</b>",
+            parse_mode="HTML",
+        )
+        logger.info(f"Video delivered to chat_id={chat_id}: {title}")
+    except Exception as e:
+        logger.error(f"Video delivery failed for chat_id={chat_id}: {e}")
+
+
 async def _deliver_result_to_user(
     bot, gen: dict, gen_id: int,
     audio_urls: list[str], image_urls: list[str], song_titles: list[str],
@@ -208,26 +284,23 @@ async def _deliver_result_to_user(
             reply_markup=after_generation_kb(gen_id),
         )
 
-        # Video generation (if enabled)
+        # Video generation (if enabled) — fire-and-forget, delivery via /callback/video
         logger.info(f"Callback video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, original_task_id={original_task_id}")
         if config.video_generation_enabled and original_task_id and song_ids:
             try:
                 client = get_suno_client()
+                # Get bot getter from the module-level bot reference
+                get_bot = lambda b=bot: b
                 for i, url in enumerate(audio_urls[:2]):
                     if not url or i >= len(song_ids) or not song_ids[i]:
                         continue
                     try:
                         title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
                         video_result = await client.generate_video(original_task_id, song_ids[i])
-                        video_url = await client.wait_for_video(video_result["task_id"])
-                        await bot.send_video(
-                            chat_id=chat_id,
-                            video=video_url,
-                            caption=f"🎬 Видеоклип: <b>{title}</b>",
-                            parse_mode="HTML",
-                        )
+                        video_task_id = video_result["task_id"]
+                        register_video_task(video_task_id, chat_id, title, get_bot)
                     except Exception as e:
-                        logger.warning(f"Callback: video generation failed for track {i}: {e}")
+                        logger.warning(f"Callback: video generation request failed for track {i}: {e}")
             except Exception as e:
                 logger.warning(f"Callback: video generation error: {e}")
 

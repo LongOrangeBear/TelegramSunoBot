@@ -373,20 +373,17 @@ async def do_generate(message: Message, state: FSMContext):
         # Video generation (if enabled)
         logger.info(f"Video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, task_id={task_id}")
         if config.video_generation_enabled:
+            from app.handlers.callback import register_video_task
+            get_bot = lambda b=message.bot: b
             for i, url in enumerate(audio_urls[:2]):
                 if not url or not song_ids[i]:
                     continue
                 try:
                     title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
                     video_result = await client.generate_video(task_id, song_ids[i])
-                    video_url = await client.wait_for_video(video_result["task_id"])
-                    await message.answer_video(
-                        video=video_url,
-                        caption=f"🎬 Видеоклип: <b>{title}</b>",
-                        parse_mode="HTML",
-                    )
+                    register_video_task(video_result["task_id"], message.chat.id, title, get_bot)
                 except Exception as e:
-                    logger.warning(f"Video generation failed for track {i}: {e}")
+                    logger.warning(f"Video generation request failed for track {i}: {e}")
 
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)
@@ -705,20 +702,17 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         # Video generation (if enabled)
         logger.info(f"Regen video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, task_id={task_id}")
         if config.video_generation_enabled:
+            from app.handlers.callback import register_video_task
+            get_bot = lambda b=callback.bot: b
             for i, url in enumerate(audio_urls[:2]):
                 if not url or not song_ids[i]:
                     continue
                 try:
                     title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
                     video_result = await client.generate_video(task_id, song_ids[i])
-                    video_url = await client.wait_for_video(video_result["task_id"])
-                    await callback.message.answer_video(
-                        video=video_url,
-                        caption=f"🎬 Видеоклип: <b>{title}</b>",
-                        parse_mode="HTML",
-                    )
+                    register_video_task(video_result["task_id"], callback.message.chat.id, title, get_bot)
                 except Exception as e:
-                    logger.warning(f"Regen video generation failed for track {i}: {e}")
+                    logger.warning(f"Regen video generation request failed for track {i}: {e}")
 
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)

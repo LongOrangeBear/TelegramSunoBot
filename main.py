@@ -16,7 +16,7 @@ from app.database import init_db, close_db
 from app.suno_api import close_suno_client
 from app.handlers import common, generation, payments
 from app.admin import create_admin_app
-from app.handlers.callback import handle_suno_callback
+from app.handlers.callback import handle_suno_callback, handle_video_callback
 
 # Logging
 logging.basicConfig(
@@ -92,6 +92,7 @@ async def run_admin():
 
     # Register callback routes on the same app
     app.router.add_post("/callback/suno", handle_suno_callback)
+    app.router.add_post("/callback/video", handle_video_callback)
 
     runner = web.AppRunner(app)
     await runner.setup()
