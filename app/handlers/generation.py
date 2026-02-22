@@ -14,6 +14,8 @@ from app.keyboards import (
     mode_kb, gender_kb, style_kb, track_kb, history_track_kb, after_generation_kb,
     main_reply_kb, greeting_recipient_kb, greeting_occasion_kb, greeting_mood_kb,
     GREETING_OCCASION_LABELS, GREETING_MOOD_LABELS,
+    stories_vibe_kb, stories_mood_kb, stories_name_kb,
+    STORIES_VIBE_LABELS, STORIES_MOOD_LABELS,
 )
 from app.states import GenerationStates
 from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
@@ -29,6 +31,8 @@ from app.texts import (
     GREETING_ENTER_CUSTOM_RECIPIENT,
     GREETING_CHOOSE_OCCASION, GREETING_ENTER_CUSTOM_OCCASION,
     GREETING_CHOOSE_MOOD, GREETING_ENTER_DETAILS,
+    STORIES_CHOOSE_VIBE, STORIES_ENTER_CUSTOM_VIBE,
+    STORIES_CHOOSE_MOOD, STORIES_ENTER_CONTEXT, STORIES_ENTER_NAME,
 )
 
 router = Router()
@@ -128,6 +132,8 @@ async def cb_mode(callback: CallbackQuery, state: FSMContext):
         await state.update_data(mode="lyrics")
     elif mode == "greeting":
         await state.update_data(mode="greeting")
+    elif mode == "stories":
+        await state.update_data(mode="stories")
     else:
         await state.update_data(mode="description")
 
@@ -188,6 +194,16 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
+    # Stories mode: branch into stories wizard
+    if data.get("mode") == "stories":
+        await state.set_state(GenerationStates.stories_vibe)
+        await callback.message.edit_text(
+            STORIES_CHOOSE_VIBE, parse_mode="HTML",
+            reply_markup=stories_vibe_kb(),
+        )
+        await callback.answer()
+        return
+
     await state.set_state(GenerationStates.entering_prompt)
     # Show mode-appropriate prompt
     text = ENTER_LYRICS if data.get("mode") == "lyrics" else ENTER_PROMPT
@@ -208,6 +224,15 @@ async def on_custom_style(message: Message, state: FSMContext):
         await message.answer(
             GREETING_CHOOSE_RECIPIENT, parse_mode="HTML",
             reply_markup=greeting_recipient_kb(),
+        )
+        return
+
+    # Stories mode: branch into stories wizard
+    if data.get("mode") == "stories":
+        await state.set_state(GenerationStates.stories_vibe)
+        await message.answer(
+            STORIES_CHOOSE_VIBE, parse_mode="HTML",
+            reply_markup=stories_vibe_kb(),
         )
         return
 
@@ -370,6 +395,111 @@ async def cb_back_style(callback: CallbackQuery, state: FSMContext):
         reply_markup=style_kb(),
     )
     await callback.answer()
+
+
+# ─── Stories wizard handlers ───
+
+# Step 1: Vibe / Role
+@router.callback_query(F.data.startswith("st_vibe:"))
+async def cb_stories_vibe(callback: CallbackQuery, state: FSMContext):
+    value = callback.data.split(":", 1)[1]
+    if value == "custom":
+        await state.set_state(GenerationStates.stories_vibe)
+        await callback.message.edit_text(STORIES_ENTER_CUSTOM_VIBE, parse_mode="HTML")
+        await callback.answer()
+        return
+    label = STORIES_VIBE_LABELS.get(value, value)
+    await state.update_data(st_vibe=label)
+    await state.set_state(GenerationStates.stories_mood)
+    await callback.message.edit_text(
+        STORIES_CHOOSE_MOOD, parse_mode="HTML",
+        reply_markup=stories_mood_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(GenerationStates.stories_vibe)
+async def on_stories_custom_vibe(message: Message, state: FSMContext):
+    """Custom vibe text input."""
+    await state.update_data(st_vibe=message.text.strip()[:60])
+    await state.set_state(GenerationStates.stories_mood)
+    await message.answer(
+        STORIES_CHOOSE_MOOD, parse_mode="HTML",
+        reply_markup=stories_mood_kb(),
+    )
+
+
+# Back to vibe (from mood)
+@router.callback_query(F.data == "back_st_vibe")
+async def cb_back_st_vibe(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GenerationStates.stories_vibe)
+    await callback.message.edit_text(
+        STORIES_CHOOSE_VIBE, parse_mode="HTML",
+        reply_markup=stories_vibe_kb(),
+    )
+    await callback.answer()
+
+
+# Step 2: Mood
+@router.callback_query(F.data.startswith("st_mood:"))
+async def cb_stories_mood(callback: CallbackQuery, state: FSMContext):
+    value = callback.data.split(":", 1)[1]
+    label = STORIES_MOOD_LABELS.get(value, value)
+    await state.update_data(st_mood=label)
+    await state.set_state(GenerationStates.stories_context)
+    await callback.message.edit_text(STORIES_ENTER_CONTEXT, parse_mode="HTML")
+    await callback.answer()
+
+
+# Step 3: Context
+@router.message(GenerationStates.stories_context)
+async def on_stories_context(message: Message, state: FSMContext):
+    await state.update_data(st_context=message.text.strip()[:200])
+    await state.set_state(GenerationStates.stories_name)
+    await message.answer(
+        STORIES_ENTER_NAME, parse_mode="HTML",
+        reply_markup=stories_name_kb(),
+    )
+
+
+# Step 4: Name (optional)
+@router.callback_query(F.data == "st_name:skip")
+async def cb_stories_name_skip(callback: CallbackQuery, state: FSMContext):
+    """Skip name → assemble prompt and generate."""
+    await state.update_data(st_name="")
+    await callback.answer("⏩ Пропущено")
+    await _assemble_stories_prompt(callback.message, state)
+
+
+@router.message(GenerationStates.stories_name)
+async def on_stories_name(message: Message, state: FSMContext):
+    await state.update_data(st_name=message.text.strip()[:40])
+    await _assemble_stories_prompt(message, state)
+
+
+async def _assemble_stories_prompt(message: Message, state: FSMContext):
+    """Assemble the stories prompt from collected data and start generation."""
+    data = await state.get_data()
+    vibe = data.get("st_vibe", "")
+    mood = data.get("st_mood", "")
+    context = data.get("st_context", "")
+    name = data.get("st_name", "")
+
+    prompt_parts = ["Короткая песня для сторис, один куплет и припев, от первого лица"]
+    if vibe:
+        prompt_parts.append(f"Вайб: {vibe}")
+    if mood:
+        prompt_parts.append(f"Атмосфера: {mood}")
+    if context:
+        prompt_parts.append(f"Контекст: {context}")
+    if name:
+        prompt_parts.append(f"Имя: {name}")
+
+    assembled = ". ".join(prompt_parts)
+    assembled = assembled[:400]
+
+    await state.update_data(prompt=assembled, mode="description")
+    await do_generate(message, state)
 
 
 async def do_generate(message: Message, state: FSMContext):
@@ -732,17 +862,27 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         prompt=gen.get("prompt", ""),
     )
 
-    await callback.answer("⚡ Запускаю новую генерацию...")
-    msg = await callback.message.answer(GENERATING, parse_mode="HTML")
-
     user_id = callback.from_user.id
+
+    # Rate limit check (prevents bypassing daily limit via regeneration)
+    error = await check_limits(user_id)
+    if error:
+        await callback.message.answer(error, parse_mode="HTML")
+        await callback.answer()
+        return
+
+    # Credits check
     has_credits, user = await check_credits(user_id)
     if not has_credits:
-        await msg.edit_text(
+        await callback.message.answer(
             NO_CREDITS.format(credits=user["credits"]),
             parse_mode="HTML",
         )
+        await callback.answer()
         return
+
+    await callback.answer("⚡ Запускаю новую генерацию...")
+    msg = await callback.message.answer(GENERATING, parse_mode="HTML")
 
     data = await state.get_data()
     gen_id_new = await db.create_generation(
@@ -810,6 +950,9 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             song_titles.append(s.get("title", f"AI Melody Track"))
             song_ids.append(s.get("id", ""))
 
+        # Re-fetch user from DB to get fresh free_generations_left
+        # (may have changed during the 1-2 min generation)
+        user = await db.get_user(user_id)
         if user["free_generations_left"] > 0:
             await db.use_free_generation(user_id)
         else:

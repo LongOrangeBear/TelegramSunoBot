@@ -44,6 +44,9 @@ def mode_kb() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="🎉 Поздравительная песня", callback_data="mode:greeting"),
     )
+    builder.row(
+        InlineKeyboardButton(text="📱 Песня для сторис", callback_data="mode:stories"),
+    )
     return builder.as_markup()
 
 
@@ -159,6 +162,86 @@ def greeting_mood_kb() -> InlineKeyboardMarkup:
     for label, data in GREETING_MOODS:
         builder.row(InlineKeyboardButton(text=label, callback_data=f"gr_mood:{data}"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_gr_occasion"))
+    return builder.as_markup()
+
+
+# ─── Stories wizard keyboards ───
+
+STORIES_VIBES = [
+    ("👑 Босс", "boss"),
+    ("🌿 На чиле", "chill"),
+    ("🔥 В огне", "fire"),
+    ("💔 Грустно", "sad"),
+    ("🎉 Праздник", "party"),
+    ("🏋️ Спорт / мотивация", "sport"),
+    ("☕ Уютно", "cozy"),
+    ("😎 Дерзкий вайб", "swagger"),
+    ("✨ Мечтатель", "dreamer"),
+]
+
+STORIES_VIBE_LABELS = {
+    "boss": "босс, я главный",
+    "chill": "на чиле, расслабленно",
+    "fire": "в огне, энергия",
+    "sad": "грустно, меланхолия",
+    "party": "праздник, веселье",
+    "sport": "спорт и мотивация",
+    "cozy": "уютно, тепло",
+    "swagger": "дерзкий вайб, крутой",
+    "dreamer": "мечтатель, в облаках",
+}
+
+STORIES_MOODS = [
+    ("😎 Дерзко", "bold"),
+    ("🥰 Мило / романтично", "cute"),
+    ("😂 Прикольно / с юмором", "funny"),
+    ("🌙 Мечтательно / лирично", "dreamy"),
+    ("💪 Мощно / энергично", "powerful"),
+    ("🌸 Нежно / спокойно", "gentle"),
+    ("🌆 Вечернее / атмосферное", "evening"),
+    ("😈 Провокационно", "provocative"),
+    ("🌞 Солнечно / позитивно", "sunny"),
+]
+
+STORIES_MOOD_LABELS = {
+    "bold": "дерзко и уверенно",
+    "cute": "мило и романтично",
+    "funny": "прикольно, с юмором",
+    "dreamy": "мечтательно и лирично",
+    "powerful": "мощно и энергично",
+    "gentle": "нежно и спокойно",
+    "evening": "вечернее, атмосферное",
+    "provocative": "провокационно и дерзко",
+    "sunny": "солнечно и позитивно",
+}
+
+
+def stories_vibe_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i in range(0, len(STORIES_VIBES), 3):
+        row = []
+        for label, data in STORIES_VIBES[i:i+3]:
+            row.append(InlineKeyboardButton(text=label, callback_data=f"st_vibe:{data}"))
+        builder.row(*row)
+    builder.row(InlineKeyboardButton(text="✏️ Свой вайб", callback_data="st_vibe:custom"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_style"))
+    return builder.as_markup()
+
+
+def stories_mood_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i in range(0, len(STORIES_MOODS), 3):
+        row = []
+        for label, data in STORIES_MOODS[i:i+3]:
+            row.append(InlineKeyboardButton(text=label, callback_data=f"st_mood:{data}"))
+        builder.row(*row)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_st_vibe"))
+    return builder.as_markup()
+
+
+def stories_name_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⏩ Пропустить", callback_data="st_name:skip"))
     return builder.as_markup()
 
 
