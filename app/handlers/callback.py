@@ -209,6 +209,7 @@ async def _deliver_result_to_user(
         )
 
         # Video generation (if enabled)
+        logger.info(f"Callback video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, original_task_id={original_task_id}")
         if config.video_generation_enabled and original_task_id and song_ids:
             try:
                 client = get_suno_client()

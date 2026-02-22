@@ -230,12 +230,12 @@ async def do_generate(message: Message, state: FSMContext):
     if mode == "lyrics":
         status_text = (
             "🎵 Отлично! Создаю музыку по твоим стихам...\n"
-            "Мне нужно 1-2 минуты."
+            "Мне нужно несколько минут."
         )
     else:
         status_text = (
             "🎵 Отлично! Работаю над стихами и мелодией по твоей идее...\n"
-            "Мне нужно 1 минуту."
+            "Мне нужно несколько минут."
         )
 
     status_msg = await message.answer(
@@ -371,6 +371,7 @@ async def do_generate(message: Message, state: FSMContext):
         )
 
         # Video generation (if enabled)
+        logger.info(f"Video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, task_id={task_id}")
         if config.video_generation_enabled:
             for i, url in enumerate(audio_urls[:2]):
                 if not url or not song_ids[i]:
@@ -441,6 +442,28 @@ async def cb_rate(callback: CallbackQuery):
         return
 
     await db.update_generation_rating(gen_id, rating)
+
+    # Remove rating buttons — replace with "rated" confirmation
+    try:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        from aiogram.types import InlineKeyboardButton
+
+        builder = InlineKeyboardBuilder()
+        # Keep the share button from the original keyboard
+        if callback.message.reply_markup:
+            for row in callback.message.reply_markup.inline_keyboard:
+                for btn in row:
+                    if btn.switch_inline_query is not None:
+                        builder.row(btn)
+                        break
+        # Replace rating row with a confirmed rating indicator
+        builder.row(
+            InlineKeyboardButton(text=f"⭐ Ваша оценка: {rating}/5", callback_data="noop")
+        )
+        await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+    except Exception as e:
+        logger.warning(f"Failed to update rating keyboard: {e}")
+
     await callback.answer(f"⭐ Оценка {rating}/5 сохранена!")
 
 
@@ -680,6 +703,7 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         )
 
         # Video generation (if enabled)
+        logger.info(f"Regen video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, task_id={task_id}")
         if config.video_generation_enabled:
             for i, url in enumerate(audio_urls[:2]):
                 if not url or not song_ids[i]:
