@@ -349,8 +349,8 @@ async def create_tbank_payment(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """INSERT INTO payments
-               (user_id, order_id, amount_rub, credits_purchased, payment_type, status, tbank_payment_id)
-               VALUES ($1, $2, $3, $4, 'tbank', 'pending', $5)
+               (user_id, order_id, stars_amount, amount_rub, credits_purchased, payment_type, status, tbank_payment_id)
+               VALUES ($1, $2, 0, $3, $4, 'tbank', 'pending', $5)
                RETURNING id""",
             user_id, order_id, amount_rub, credits, tbank_payment_id,
         )
