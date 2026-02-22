@@ -91,12 +91,11 @@ class Config:
         if self.suno_model not in self.available_models:
             self.suno_model = self.available_models[0]
         self.credit_packages = [
-            {"credits": 1, "stars": 75, "label": "1🎵 — ⭐75"},
-            {"credits": 2, "stars": 140, "label": "2🎵 — ⭐140"},
-            {"credits": 3, "stars": 200, "label": "3🎵 — ⭐200"},
-            {"credits": 5, "stars": 300, "label": "5🎵 — ⭐300"},
-            {"credits": 10, "stars": 500, "label": "10🎵 — ⭐500"},
-            {"credits": 50, "stars": 2000, "label": "50🎵 — ⭐2000"},
+            {"credits": 1, "stars": 50, "label": "1🎵 — ⭐50"},
+            {"credits": 3, "stars": 140, "label": "3🎵 — ⭐140"},
+            {"credits": 5, "stars": 225, "label": "5🎵 — ⭐225"},
+            {"credits": 10, "stars": 400, "label": "10🎵 — ⭐400"},
+            {"credits": 50, "stars": 1500, "label": "50🎵 — ⭐1500"},
         ]
 
 

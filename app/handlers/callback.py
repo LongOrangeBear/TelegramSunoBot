@@ -308,10 +308,103 @@ async def _deliver_result_to_user(
         logger.error(f"Callback: error sending results to user: {e}")
 
 
+def _humanize_error(error_msg: str) -> str:
+    """Convert raw Suno API error into a user-friendly Russian message."""
+    if not error_msg:
+        return GENERATION_ERROR
+
+    lower = error_msg.lower()
+
+    # Artist name detected in prompt/tags
+    if "artist name" in lower:
+        # Extract the artist name from the error if possible
+        # e.g. "Your tags contain artist name maksim - we don't reference..."
+        import re
+        match = re.search(r'artist name\s+(\w+)', lower)
+        name = match.group(1).title() if match else "исполнителя"
+        return (
+            f"❌ <b>Имя совпало с исполнителем</b>\n\n"
+            f"В вашем тексте обнаружено имя «{name}», "
+            f"которое совпало с именем известного исполнителя.\n\n"
+            f"Нейросеть не может использовать имена реальных артистов. "
+            f"Попробуйте изменить имя — например, используйте "
+            f"уменьшительную форму или инициал.\n\n"
+            f"Кредит не списан."
+        )
+
+    # Prompt too long
+    if "prompt length" in lower or "cannot exceed" in lower or "too long" in lower:
+        return (
+            "❌ <b>Слишком длинный текст</b>\n\n"
+            "Ваш текст превышает допустимый размер. "
+            "Попробуйте сократить описание и отправить ещё раз.\n\n"
+            "Кредит не списан."
+        )
+
+    # Title too long
+    if "title" in lower and ("exceed" in lower or "length" in lower):
+        return (
+            "❌ <b>Слишком длинное название</b>\n\n"
+            "Название трека превышает допустимый размер. "
+            "Попробуйте сократить описание.\n\n"
+            "Кредит не списан."
+        )
+
+    # Content policy / sensitive words
+    if "sensitive" in lower or "content" in lower and ("violation" in lower or "policy" in lower or "moderation" in lower):
+        return (
+            "⚠️ <b>Контент отклонён</b>\n\n"
+            "Ваш запрос содержит слова, которые не пропускает "
+            "система модерации нейросети. Попробуйте переформулировать "
+            "описание.\n\n"
+            "Кредит не списан."
+        )
+
+    # Credits / balance
+    if "credit" in lower and ("insufficient" in lower or "balance" in lower or "enough" in lower):
+        return (
+            "❌ <b>Ошибка на стороне сервиса</b>\n\n"
+            "Произошла техническая ошибка при генерации. "
+            "Мы уже работаем над решением. Попробуйте позже.\n\n"
+            "Кредит не списан."
+        )
+
+    # Rate limited
+    if "rate limit" in lower or "too many" in lower or "frequency" in lower:
+        return (
+            "⏰ <b>Слишком много запросов</b>\n\n"
+            "Сервис временно перегружен. "
+            "Подождите пару минут и попробуйте снова.\n\n"
+            "Кредит не списан."
+        )
+
+    # Server / maintenance
+    if "maintenance" in lower or "server error" in lower or "internal" in lower:
+        return (
+            "🔧 <b>Сервис временно недоступен</b>\n\n"
+            "На стороне генерации музыки ведутся технические работы. "
+            "Попробуйте через несколько минут.\n\n"
+            "Кредит не списан."
+        )
+
+    # Permissions
+    if "permission" in lower or "access" in lower:
+        return (
+            "❌ <b>Ошибка доступа</b>\n\n"
+            "Произошла техническая ошибка. "
+            "Мы уже работаем над решением. Попробуйте позже.\n\n"
+            "Кредит не списан."
+        )
+
+    # Default fallback
+    return GENERATION_ERROR
+
+
 async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
     """Send error notification to the user in Telegram (runs as background task)."""
     chat_id = gen["callback_chat_id"]
     status_msg_id = gen.get("callback_message_id")
+    user_text = _humanize_error(error_msg)
 
     delivered = False
     if status_msg_id:
@@ -319,7 +412,7 @@ async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=status_msg_id,
-                text=GENERATION_ERROR,
+                text=user_text,
                 parse_mode="HTML",
             )
             delivered = True
@@ -330,7 +423,7 @@ async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
         try:
             await bot.send_message(
                 chat_id=chat_id,
-                text=GENERATION_ERROR,
+                text=user_text,
                 parse_mode="HTML",
             )
         except Exception as e:
