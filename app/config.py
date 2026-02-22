@@ -81,8 +81,14 @@ class Config:
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     admin_port: int = int(os.getenv("ADMIN_PORT", "8080"))
 
+    # T-Bank (Tinkoff) acquiring
+    tbank_terminal_key: str = os.getenv("TBANK_TERMINAL_KEY", "")
+    tbank_password: str = os.getenv("TBANK_PASSWORD", "")
+    tbank_enabled: bool = False  # set in __post_init__
+
     # Credit packages: (credits, stars_price)
     credit_packages: list = None
+    credit_packages_rub: list = None
 
     def __post_init__(self):
         if not self.bot_token:
@@ -97,6 +103,14 @@ class Config:
             {"credits": 10, "stars": 400, "label": "10🎵 — ⭐400"},
             {"credits": 50, "stars": 1500, "label": "50🎵 — ⭐1500"},
         ]
+        self.credit_packages_rub = [
+            {"credits": 1, "rub": 50, "label": "1🎵 — 50₽"},
+            {"credits": 3, "rub": 140, "label": "3🎵 — 140₽"},
+            {"credits": 5, "rub": 225, "label": "5🎵 — 225₽"},
+            {"credits": 10, "rub": 400, "label": "10🎵 — 400₽"},
+            {"credits": 50, "rub": 1500, "label": "50🎵 — 1500₽"},
+        ]
+        self.tbank_enabled = bool(self.tbank_terminal_key)
 
 
 config = Config()

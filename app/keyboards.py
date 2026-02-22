@@ -249,7 +249,7 @@ def stories_name_kb() -> InlineKeyboardMarkup:
 # ─── Balance / Buy page ───
 
 def balance_kb() -> InlineKeyboardMarkup:
-    """Balance page with tariffs, Telegram Stars, and referral."""
+    """Balance page with tariffs, Telegram Stars, card payment, and referral."""
     builder = InlineKeyboardBuilder()
     for pkg in config.credit_packages:
         builder.row(
@@ -261,9 +261,27 @@ def balance_kb() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="⭐ Оплата Telegram Stars", callback_data="buy_stars"),
     )
+    if config.tbank_enabled:
+        builder.row(
+            InlineKeyboardButton(text="💳 Оплата картой", callback_data="buy_card"),
+        )
     builder.row(
         InlineKeyboardButton(text="🔗 Реферальная программа", callback_data="invite"),
     )
+    return builder.as_markup()
+
+
+def card_kb() -> InlineKeyboardMarkup:
+    """T-Bank card payment options (ruble prices)."""
+    builder = InlineKeyboardBuilder()
+    for pkg in config.credit_packages_rub:
+        builder.row(
+            InlineKeyboardButton(
+                text=pkg["label"],
+                callback_data=f"buy_tbank:{pkg['credits']}:{pkg['rub']}",
+            )
+        )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_balance"))
     return builder.as_markup()
 
 

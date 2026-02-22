@@ -85,6 +85,18 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='rating') THEN
         ALTER TABLE generations ADD COLUMN rating INTEGER;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='payments' AND column_name='payment_type') THEN
+        ALTER TABLE payments ADD COLUMN payment_type VARCHAR(20) NOT NULL DEFAULT 'stars';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='payments' AND column_name='order_id') THEN
+        ALTER TABLE payments ADD COLUMN order_id VARCHAR(64);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='payments' AND column_name='amount_rub') THEN
+        ALTER TABLE payments ADD COLUMN amount_rub INTEGER NOT NULL DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='payments' AND column_name='tbank_payment_id') THEN
+        ALTER TABLE payments ADD COLUMN tbank_payment_id VARCHAR(64);
+    END IF;
 END $$;
 """
 
@@ -327,6 +339,49 @@ async def create_payment(user_id: int, tg_payment_id: str, stars: int, credits: 
             user_id, credits,
         )
         return row["id"]
+
+
+async def create_tbank_payment(
+    user_id: int, order_id: str, amount_rub: int, credits: int,
+    tbank_payment_id: str | None = None,
+) -> int:
+    """Create a T-Bank payment record (initially pending)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO payments
+               (user_id, order_id, amount_rub, credits_purchased, payment_type, status, tbank_payment_id)
+               VALUES ($1, $2, $3, $4, 'tbank', 'pending', $5)
+               RETURNING id""",
+            user_id, order_id, amount_rub, credits, tbank_payment_id,
+        )
+        return row["id"]
+
+
+async def complete_tbank_payment(order_id: str, tbank_payment_id: str) -> dict | None:
+    """Mark a T-Bank payment as completed and add credits to user. Returns payment dict or None."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM payments WHERE order_id = $1 AND payment_type = 'tbank' AND status = 'pending'",
+            order_id,
+        )
+        if not row:
+            return None
+
+        payment = dict(row)
+
+        # Mark as completed
+        await conn.execute(
+            "UPDATE payments SET status = 'completed', tbank_payment_id = $2 WHERE id = $1",
+            payment["id"], tbank_payment_id,
+        )
+
+        # Add credits to user
+        await conn.execute(
+            "UPDATE users SET credits = credits + $2 WHERE telegram_id = $1",
+            payment["user_id"], payment["credits_purchased"],
+        )
+
+        return payment
 
 
 # ─── Admin panel queries ───

@@ -10,7 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from app import database as db
-from app.texts import GENERATION_TIMEOUT
+from app.texts import GENERATION_TIMEOUT, TBANK_PAYMENT_SUCCESS
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
@@ -20,6 +20,7 @@ from app.suno_api import close_suno_client
 from app.handlers import common, generation, payments
 from app.admin import create_admin_app
 from app.handlers.callback import handle_suno_callback, handle_video_callback
+from app.keyboards import main_reply_kb
 
 GENERATION_TIMEOUT_MINUTES = 10
 WATCHDOG_CHECK_INTERVAL = 120  # seconds
@@ -55,6 +56,12 @@ async def on_startup(bot: Bot):
 async def on_shutdown(bot: Bot):
     logger.info("Bot shutting down...")
     await close_suno_client()
+    # Close T-Bank HTTP session
+    try:
+        from app.tbank_api import close_session as close_tbank
+        await close_tbank()
+    except Exception:
+        pass
     await close_db()
     logger.info("Cleanup complete")
 
@@ -99,6 +106,7 @@ async def run_admin():
     # Register callback routes on the same app
     app.router.add_post("/callback/suno", handle_suno_callback)
     app.router.add_post("/callback/video", handle_video_callback)
+    app.router.add_post("/callback/tbank", handle_tbank_notification)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -107,6 +115,8 @@ async def run_admin():
     logger.info(f"Admin panel started at http://localhost:{config.admin_port}/admin/?token={config.admin_token}")
     if config.callback_base_url:
         logger.info(f"Suno callback URL: {config.callback_base_url.rstrip('/')}/callback/suno")
+        if config.tbank_enabled:
+            logger.info(f"T-Bank callback URL: {config.callback_base_url.rstrip('/')}/callback/tbank")
 
     # Start generation watchdog
     asyncio.create_task(generation_watchdog())
@@ -168,6 +178,66 @@ async def generation_watchdog():
             logger.error(f"Watchdog error: {e}", exc_info=True)
 
         await asyncio.sleep(WATCHDOG_CHECK_INTERVAL)
+
+
+async def handle_tbank_notification(request: web.Request) -> web.Response:
+    """Handle T-Bank payment notification webhook.
+
+    T-Bank sends POST notifications with payment status updates.
+    Must respond with HTTP 200 and body 'OK'.
+    """
+    try:
+        data = await request.json()
+        logger.info(f"T-Bank notification: Status={data.get('Status')}, "
+                     f"OrderId={data.get('OrderId')}, "
+                     f"PaymentId={data.get('PaymentId')}, "
+                     f"Amount={data.get('Amount')}")
+
+        # Verify notification token
+        from app.tbank_api import verify_notification_token
+        if not verify_notification_token(data):
+            logger.warning(f"T-Bank notification: invalid token for OrderId={data.get('OrderId')}")
+            return web.Response(text="OK", status=200)
+
+        status = data.get("Status", "")
+        order_id = data.get("OrderId", "")
+        payment_id = str(data.get("PaymentId", ""))
+
+        # Process only CONFIRMED status (one-stage payment sends both AUTHORIZED and CONFIRMED)
+        if status == "CONFIRMED":
+            payment = await db.complete_tbank_payment(order_id, payment_id)
+
+            if payment and bot_instance:
+                user_id = payment["user_id"]
+                credits = payment["credits_purchased"]
+                amount_rub = payment["amount_rub"]
+
+                # Get updated balance
+                user = await db.get_user(user_id)
+                if user:
+                    balance = user["credits"] + user["free_generations_left"]
+                    try:
+                        await bot_instance.send_message(
+                            user_id,
+                            TBANK_PAYMENT_SUCCESS.format(
+                                credits=credits, rub=amount_rub, balance=balance
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=main_reply_kb(),
+                        )
+                    except Exception as e:
+                        logger.error(f"T-Bank: failed to notify user {user_id}: {e}")
+
+                logger.info(f"T-Bank payment completed: user={user_id}, "
+                             f"credits={credits}, amount={amount_rub}₽, order={order_id}")
+            elif not payment:
+                logger.warning(f"T-Bank: no pending payment found for OrderId={order_id}")
+
+        return web.Response(text="OK", status=200)
+
+    except Exception as e:
+        logger.error(f"T-Bank notification error: {e}", exc_info=True)
+        return web.Response(text="OK", status=200)
 
 
 async def main():
