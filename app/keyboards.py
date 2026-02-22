@@ -41,6 +41,9 @@ def mode_kb() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="📝 Есть стихи", callback_data="mode:lyrics"),
     )
+    builder.row(
+        InlineKeyboardButton(text="🎉 Поздравительная песня", callback_data="mode:greeting"),
+    )
     return builder.as_markup()
 
 
@@ -82,6 +85,80 @@ def style_kb() -> InlineKeyboardMarkup:
         builder.row(*row)
     builder.row(InlineKeyboardButton(text="✏️ Свой стиль", callback_data="style:custom_style"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_gender"))
+    return builder.as_markup()
+
+
+# ─── Greeting wizard keyboards ───
+
+GREETING_RECIPIENTS = [
+    ("👩 Маме", "маме"),
+    ("👨 Папе", "папе"),
+    ("💕 Любимому/ой", "любимому человеку"),
+    ("👫 Другу/подруге", "другу"),
+    ("💼 Коллеге", "коллеге"),
+    ("👶 Ребёнку", "ребёнку"),
+    ("🎖 Мужчине (23 февраля)", "мужчине (защитнику)"),
+]
+
+GREETING_OCCASIONS = [
+    ("🎂 День рождения", "bday"),
+    ("🎖 23 февраля", "feb23"),
+    ("🌷 8 марта", "mar8"),
+    ("💒 Свадьба", "wedding"),
+    ("🎊 Юбилей", "jubilee"),
+    ("🎓 Выпускной", "grad"),
+    ("🎄 Новый год", "newyear"),
+]
+
+GREETING_OCCASION_LABELS = {
+    "bday": "День рождения",
+    "feb23": "23 февраля — День защитника Отечества",
+    "mar8": "8 марта — Международный женский день",
+    "wedding": "Свадьба",
+    "jubilee": "Юбилей",
+    "grad": "Выпускной",
+    "newyear": "Новый год",
+}
+
+GREETING_MOODS = [
+    ("🎩 Серьёзное / трогательное", "serious"),
+    ("😄 Шутливое / весёлое", "funny"),
+    ("🎭 Микс", "mix"),
+]
+
+GREETING_MOOD_LABELS = {
+    "serious": "трогательное и душевное",
+    "funny": "шутливое и весёлое",
+    "mix": "и смешное, и трогательное",
+}
+
+
+def greeting_recipient_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for label, data in GREETING_RECIPIENTS:
+        builder.row(InlineKeyboardButton(text=label, callback_data=f"gr_rcpt:{data}"))
+    builder.row(InlineKeyboardButton(text="✏️ Другое", callback_data="gr_rcpt:custom"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_style"))
+    return builder.as_markup()
+
+
+def greeting_occasion_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i in range(0, len(GREETING_OCCASIONS), 2):
+        row = []
+        for label, data in GREETING_OCCASIONS[i:i+2]:
+            row.append(InlineKeyboardButton(text=label, callback_data=f"gr_occ:{data}"))
+        builder.row(*row)
+    builder.row(InlineKeyboardButton(text="✏️ Другое", callback_data="gr_occ:custom"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_gr_name"))
+    return builder.as_markup()
+
+
+def greeting_mood_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for label, data in GREETING_MOODS:
+        builder.row(InlineKeyboardButton(text=label, callback_data=f"gr_mood:{data}"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_gr_occasion"))
     return builder.as_markup()
 
 

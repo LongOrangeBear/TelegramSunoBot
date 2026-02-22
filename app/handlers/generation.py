@@ -12,7 +12,8 @@ from app import database as db
 from app.config import config
 from app.keyboards import (
     mode_kb, gender_kb, style_kb, track_kb, history_track_kb, after_generation_kb,
-    main_reply_kb,
+    main_reply_kb, greeting_recipient_kb, greeting_occasion_kb, greeting_mood_kb,
+    GREETING_OCCASION_LABELS, GREETING_MOOD_LABELS,
 )
 from app.states import GenerationStates
 from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
@@ -24,6 +25,10 @@ from app.texts import (
     RATE_LIMIT_USER, RATE_LIMIT_GLOBAL,
     HISTORY_EMPTY, HISTORY_HEADER, DOWNLOAD_SUCCESS, DOWNLOAD_NO_CREDITS,
     RATING_THANKS,
+    GREETING_CHOOSE_RECIPIENT, GREETING_ENTER_NAME,
+    GREETING_ENTER_CUSTOM_RECIPIENT,
+    GREETING_CHOOSE_OCCASION, GREETING_ENTER_CUSTOM_OCCASION,
+    GREETING_CHOOSE_MOOD, GREETING_ENTER_DETAILS,
 )
 
 router = Router()
@@ -121,10 +126,12 @@ async def cb_mode(callback: CallbackQuery, state: FSMContext):
 
     if mode == "lyrics":
         await state.update_data(mode="lyrics")
+    elif mode == "greeting":
+        await state.update_data(mode="greeting")
     else:
         await state.update_data(mode="description")
 
-    # Both modes go through gender → style → text input
+    # All modes go through gender → style first
     await state.set_state(GenerationStates.choosing_gender)
     await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
     await callback.answer()
@@ -170,6 +177,17 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(style=style)
     data = await state.get_data()
+
+    # Greeting mode: branch into greeting wizard
+    if data.get("mode") == "greeting":
+        await state.set_state(GenerationStates.greeting_recipient)
+        await callback.message.edit_text(
+            GREETING_CHOOSE_RECIPIENT, parse_mode="HTML",
+            reply_markup=greeting_recipient_kb(),
+        )
+        await callback.answer()
+        return
+
     await state.set_state(GenerationStates.entering_prompt)
     # Show mode-appropriate prompt
     text = ENTER_LYRICS if data.get("mode") == "lyrics" else ENTER_PROMPT
@@ -183,6 +201,16 @@ async def on_custom_style(message: Message, state: FSMContext):
     await state.update_data(style=custom_style)
     data = await state.get_data()
     await state.set_state(GenerationStates.entering_prompt)
+
+    # Greeting mode: branch into greeting wizard
+    if data.get("mode") == "greeting":
+        await state.set_state(GenerationStates.greeting_recipient)
+        await message.answer(
+            GREETING_CHOOSE_RECIPIENT, parse_mode="HTML",
+            reply_markup=greeting_recipient_kb(),
+        )
+        return
+
     # Show mode-appropriate prompt
     text = ENTER_LYRICS if data.get("mode") == "lyrics" else ENTER_PROMPT
     await message.answer(text, parse_mode="HTML")
@@ -204,7 +232,145 @@ async def on_prompt(message: Message, state: FSMContext):
     await do_generate(message, state)
 
 
-# ─── Generation ───
+# ─── Greeting wizard handlers ───
+
+# Step 1: Recipient
+@router.callback_query(F.data.startswith("gr_rcpt:"))
+async def cb_greeting_recipient(callback: CallbackQuery, state: FSMContext):
+    value = callback.data.split(":", 1)[1]
+    if value == "custom":
+        await state.set_state(GenerationStates.greeting_recipient)
+        await callback.message.edit_text(GREETING_ENTER_CUSTOM_RECIPIENT, parse_mode="HTML")
+        await callback.answer()
+        return
+    await state.update_data(gr_recipient=value)
+    await state.set_state(GenerationStates.greeting_name)
+    await callback.message.edit_text(GREETING_ENTER_NAME, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(GenerationStates.greeting_recipient)
+async def on_greeting_custom_recipient(message: Message, state: FSMContext):
+    """Custom recipient text input."""
+    await state.update_data(gr_recipient=message.text.strip()[:60])
+    await state.set_state(GenerationStates.greeting_name)
+    await message.answer(GREETING_ENTER_NAME, parse_mode="HTML")
+
+
+# Step 2: Name
+@router.message(GenerationStates.greeting_name)
+async def on_greeting_name(message: Message, state: FSMContext):
+    await state.update_data(gr_name=message.text.strip()[:60])
+    await state.set_state(GenerationStates.greeting_occasion)
+    await message.answer(
+        GREETING_CHOOSE_OCCASION, parse_mode="HTML",
+        reply_markup=greeting_occasion_kb(),
+    )
+
+
+# Back to name input (from occasion)
+@router.callback_query(F.data == "back_gr_name")
+async def cb_back_gr_name(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GenerationStates.greeting_name)
+    await callback.message.edit_text(GREETING_ENTER_NAME, parse_mode="HTML")
+    await callback.answer()
+
+
+# Step 3: Occasion
+@router.callback_query(F.data.startswith("gr_occ:"))
+async def cb_greeting_occasion(callback: CallbackQuery, state: FSMContext):
+    value = callback.data.split(":", 1)[1]
+    if value == "custom":
+        await state.set_state(GenerationStates.greeting_occasion)
+        await callback.message.edit_text(GREETING_ENTER_CUSTOM_OCCASION, parse_mode="HTML")
+        await callback.answer()
+        return
+    # Resolve short ID to display label
+    label = GREETING_OCCASION_LABELS.get(value, value)
+    await state.update_data(gr_occasion=label)
+    await state.set_state(GenerationStates.greeting_mood)
+    await callback.message.edit_text(
+        GREETING_CHOOSE_MOOD, parse_mode="HTML",
+        reply_markup=greeting_mood_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(GenerationStates.greeting_occasion)
+async def on_greeting_custom_occasion(message: Message, state: FSMContext):
+    """Custom occasion text input."""
+    await state.update_data(gr_occasion=message.text.strip()[:80])
+    await state.set_state(GenerationStates.greeting_mood)
+    await message.answer(
+        GREETING_CHOOSE_MOOD, parse_mode="HTML",
+        reply_markup=greeting_mood_kb(),
+    )
+
+
+# Back to occasion (from mood)
+@router.callback_query(F.data == "back_gr_occasion")
+async def cb_back_gr_occasion(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GenerationStates.greeting_occasion)
+    await callback.message.edit_text(
+        GREETING_CHOOSE_OCCASION, parse_mode="HTML",
+        reply_markup=greeting_occasion_kb(),
+    )
+    await callback.answer()
+
+
+# Step 4: Mood
+@router.callback_query(F.data.startswith("gr_mood:"))
+async def cb_greeting_mood(callback: CallbackQuery, state: FSMContext):
+    value = callback.data.split(":", 1)[1]
+    # Resolve short ID to display label
+    label = GREETING_MOOD_LABELS.get(value, value)
+    await state.update_data(gr_mood=label)
+    await state.set_state(GenerationStates.greeting_details)
+    await callback.message.edit_text(GREETING_ENTER_DETAILS, parse_mode="HTML")
+    await callback.answer()
+
+
+# Step 5: Details → assemble prompt and generate
+@router.message(GenerationStates.greeting_details)
+async def on_greeting_details(message: Message, state: FSMContext):
+    details = message.text.strip()[:300]
+    await state.update_data(gr_details=details)
+
+    # Assemble the greeting prompt
+    data = await state.get_data()
+    recipient = data.get("gr_recipient", "")
+    name = data.get("gr_name", "")
+    occasion = data.get("gr_occasion", "")
+    mood = data.get("gr_mood", "")
+
+    prompt_parts = [f"Поздравительная песня для {recipient}"]
+    if name:
+        prompt_parts.append(f"Имя: {name}")
+    if occasion:
+        prompt_parts.append(f"Повод: {occasion}")
+    if mood:
+        prompt_parts.append(f"Настроение: {mood}")
+    if details:
+        prompt_parts.append(f"Детали: {details}")
+
+    assembled = ". ".join(prompt_parts)
+    # Limit to 400 chars for description mode
+    assembled = assembled[:400]
+
+    await state.update_data(prompt=assembled, mode="description")
+    await do_generate(message, state)
+
+
+# Back to style (from greeting recipient)
+@router.callback_query(F.data == "back_style")
+async def cb_back_style(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GenerationStates.choosing_style)
+    await callback.message.edit_text(
+        CHOOSE_STYLE, parse_mode="HTML",
+        reply_markup=style_kb(),
+    )
+    await callback.answer()
+
 
 async def do_generate(message: Message, state: FSMContext):
     """Execute the generation after all inputs collected."""
