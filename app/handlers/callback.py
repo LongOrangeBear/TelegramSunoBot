@@ -313,6 +313,7 @@ async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
     chat_id = gen["callback_chat_id"]
     status_msg_id = gen.get("callback_message_id")
 
+    delivered = False
     if status_msg_id:
         try:
             await bot.edit_message_text(
@@ -321,5 +322,16 @@ async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
                 text=GENERATION_ERROR,
                 parse_mode="HTML",
             )
+            delivered = True
         except Exception as e:
-            logger.error(f"Callback: failed to edit error msg: {e}")
+            logger.warning(f"Callback: failed to edit error msg: {e}")
+
+    if not delivered:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=GENERATION_ERROR,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Callback: failed to send error msg to chat {chat_id}: {e}")

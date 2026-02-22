@@ -298,6 +298,18 @@ async def reset_user_daily_generations(user_id: int):
         )
 
 
+async def get_stuck_generations(timeout_minutes: int = 10) -> list[dict]:
+    """Find generations stuck in 'processing' for longer than timeout."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM generations
+               WHERE status IN ('processing', 'pending')
+                 AND created_at < NOW() - make_interval(mins := $1)
+               ORDER BY created_at ASC""",
+            timeout_minutes,
+        )
+        return [dict(r) for r in rows]
+
 
 # ─── Payment operations ───
 

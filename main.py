@@ -8,6 +8,9 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+
+from app import database as db
+from app.texts import GENERATION_TIMEOUT
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
@@ -17,6 +20,9 @@ from app.suno_api import close_suno_client
 from app.handlers import common, generation, payments
 from app.admin import create_admin_app
 from app.handlers.callback import handle_suno_callback, handle_video_callback
+
+GENERATION_TIMEOUT_MINUTES = 10
+WATCHDOG_CHECK_INTERVAL = 120  # seconds
 
 # Logging
 logging.basicConfig(
@@ -102,9 +108,66 @@ async def run_admin():
     if config.callback_base_url:
         logger.info(f"Suno callback URL: {config.callback_base_url.rstrip('/')}/callback/suno")
 
+    # Start generation watchdog
+    asyncio.create_task(generation_watchdog())
+
     # Keep running
     while True:
         await asyncio.sleep(3600)
+
+
+async def generation_watchdog():
+    """Periodically check for stuck generations and notify users."""
+    logger.info(f"Generation watchdog started (timeout={GENERATION_TIMEOUT_MINUTES}m, interval={WATCHDOG_CHECK_INTERVAL}s)")
+    # Wait for bot to be ready
+    await asyncio.sleep(10)
+
+    while True:
+        try:
+            stuck = await db.get_stuck_generations(timeout_minutes=GENERATION_TIMEOUT_MINUTES)
+            if stuck:
+                logger.warning(f"Watchdog: found {len(stuck)} stuck generation(s)")
+
+            for gen in stuck:
+                gen_id = gen["id"]
+                chat_id = gen.get("callback_chat_id")
+                status_msg_id = gen.get("callback_message_id")
+
+                # Mark as error
+                await db.update_generation_status(
+                    gen_id, "error", error_message="timeout"
+                )
+                logger.info(f"Watchdog: generation {gen_id} marked as timeout error")
+
+                # Notify user
+                if chat_id and bot_instance:
+                    delivered = False
+                    if status_msg_id:
+                        try:
+                            await bot_instance.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=status_msg_id,
+                                text=GENERATION_TIMEOUT,
+                                parse_mode="HTML",
+                            )
+                            delivered = True
+                        except Exception as e:
+                            logger.warning(f"Watchdog: failed to edit msg for gen {gen_id}: {e}")
+
+                    if not delivered:
+                        try:
+                            await bot_instance.send_message(
+                                chat_id=chat_id,
+                                text=GENERATION_TIMEOUT,
+                                parse_mode="HTML",
+                            )
+                        except Exception as e:
+                            logger.error(f"Watchdog: failed to send msg for gen {gen_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Watchdog error: {e}", exc_info=True)
+
+        await asyncio.sleep(WATCHDOG_CHECK_INTERVAL)
 
 
 async def main():
