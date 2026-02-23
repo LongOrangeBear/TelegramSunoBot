@@ -214,8 +214,9 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
 
 @router.message(GenerationStates.entering_custom_style)
 async def on_custom_style(message: Message, state: FSMContext):
-    custom_style = message.text.strip()[:90]
-    await state.update_data(style=custom_style)
+    full_style = message.text.strip()
+    custom_style = full_style[:90]
+    await state.update_data(style=custom_style, style_raw=full_style)
     data = await state.get_data()
     await state.set_state(GenerationStates.entering_prompt)
 
@@ -248,13 +249,18 @@ async def on_custom_style(message: Message, state: FSMContext):
 async def on_prompt(message: Message, state: FSMContext):
     data = await state.get_data()
     mode = data.get("mode", "description")
-    text = message.text.strip()
+    full_text = message.text.strip()
+
+    # Store full text before truncation
+    raw_input = json.dumps({
+        "text": full_text,
+        "style_raw": data.get("style_raw", data.get("style", "")),
+    }, ensure_ascii=False)
 
     # For description mode, limit to 400 chars
-    if mode != "lyrics":
-        text = text[:400]
+    text = full_text[:400] if mode != "lyrics" else full_text
 
-    await state.update_data(prompt=text)
+    await state.update_data(prompt=text, user_mode=mode, raw_input=raw_input)
     await do_generate(message, state)
 
 
@@ -278,7 +284,8 @@ async def cb_greeting_recipient(callback: CallbackQuery, state: FSMContext):
 @router.message(GenerationStates.greeting_recipient)
 async def on_greeting_custom_recipient(message: Message, state: FSMContext):
     """Custom recipient text input."""
-    await state.update_data(gr_recipient=message.text.strip()[:60])
+    full = message.text.strip()
+    await state.update_data(gr_recipient=full[:60], gr_recipient_raw=full)
     await state.set_state(GenerationStates.greeting_name)
     await message.answer(GREETING_ENTER_NAME, parse_mode="HTML")
 
@@ -286,7 +293,8 @@ async def on_greeting_custom_recipient(message: Message, state: FSMContext):
 # Step 2: Name
 @router.message(GenerationStates.greeting_name)
 async def on_greeting_name(message: Message, state: FSMContext):
-    await state.update_data(gr_name=message.text.strip()[:60])
+    full = message.text.strip()
+    await state.update_data(gr_name=full[:60], gr_name_raw=full)
     await state.set_state(GenerationStates.greeting_occasion)
     await message.answer(
         GREETING_CHOOSE_OCCASION, parse_mode="HTML",
@@ -325,7 +333,8 @@ async def cb_greeting_occasion(callback: CallbackQuery, state: FSMContext):
 @router.message(GenerationStates.greeting_occasion)
 async def on_greeting_custom_occasion(message: Message, state: FSMContext):
     """Custom occasion text input."""
-    await state.update_data(gr_occasion=message.text.strip()[:80])
+    full = message.text.strip()
+    await state.update_data(gr_occasion=full[:80], gr_occasion_raw=full)
     await state.set_state(GenerationStates.greeting_mood)
     await message.answer(
         GREETING_CHOOSE_MOOD, parse_mode="HTML",
@@ -359,7 +368,8 @@ async def cb_greeting_mood(callback: CallbackQuery, state: FSMContext):
 # Step 5: Details → assemble prompt and generate
 @router.message(GenerationStates.greeting_details)
 async def on_greeting_details(message: Message, state: FSMContext):
-    details = message.text.strip()[:300]
+    full_details = message.text.strip()
+    details = full_details[:300]
     await state.update_data(gr_details=details)
 
     # Assemble the greeting prompt
@@ -383,10 +393,14 @@ async def on_greeting_details(message: Message, state: FSMContext):
     # Limit to 400 chars for description mode
     assembled = assembled[:400]
 
-    # Preserve original mode and raw wizard inputs
+    # Preserve original mode and raw wizard inputs (full text before truncation)
     raw_input = json.dumps({
-        "recipient": recipient, "name": name,
-        "occasion": occasion, "mood": mood, "details": details,
+        "recipient": data.get("gr_recipient_raw", recipient),
+        "name": data.get("gr_name_raw", name),
+        "occasion": data.get("gr_occasion_raw", occasion),
+        "mood": mood,
+        "details": full_details,
+        "style_raw": data.get("style_raw", data.get("style", "")),
     }, ensure_ascii=False)
 
     await state.update_data(
@@ -431,7 +445,8 @@ async def cb_stories_vibe(callback: CallbackQuery, state: FSMContext):
 @router.message(GenerationStates.stories_vibe)
 async def on_stories_custom_vibe(message: Message, state: FSMContext):
     """Custom vibe text input."""
-    await state.update_data(st_vibe=message.text.strip()[:60])
+    full = message.text.strip()
+    await state.update_data(st_vibe=full[:60], st_vibe_raw=full)
     await state.set_state(GenerationStates.stories_mood)
     await message.answer(
         STORIES_CHOOSE_MOOD, parse_mode="HTML",
@@ -464,7 +479,8 @@ async def cb_stories_mood(callback: CallbackQuery, state: FSMContext):
 # Step 3: Context
 @router.message(GenerationStates.stories_context)
 async def on_stories_context(message: Message, state: FSMContext):
-    await state.update_data(st_context=message.text.strip()[:200])
+    full = message.text.strip()
+    await state.update_data(st_context=full[:200], st_context_raw=full)
     await state.set_state(GenerationStates.stories_name)
     await message.answer(
         STORIES_ENTER_NAME, parse_mode="HTML",
@@ -492,7 +508,8 @@ async def cb_stories_name_skip(callback: CallbackQuery, state: FSMContext):
 
 @router.message(GenerationStates.stories_name)
 async def on_stories_name(message: Message, state: FSMContext):
-    await state.update_data(st_name=message.text.strip()[:40])
+    full = message.text.strip()
+    await state.update_data(st_name=full[:40], st_name_raw=full)
     await _assemble_stories_prompt(message, state)
 
 
@@ -517,9 +534,13 @@ async def _assemble_stories_prompt(message: Message, state: FSMContext, user_id:
     assembled = ". ".join(prompt_parts)
     assembled = assembled[:400]
 
-    # Preserve original mode and raw wizard inputs
+    # Preserve original mode and raw wizard inputs (full text before truncation)
     raw_input = json.dumps({
-        "vibe": vibe, "mood": mood, "context": context, "name": name,
+        "vibe": data.get("st_vibe_raw", vibe),
+        "mood": mood,
+        "context": data.get("st_context_raw", context),
+        "name": data.get("st_name_raw", name),
+        "style_raw": data.get("style_raw", data.get("style", "")),
     }, ensure_ascii=False)
 
     await state.update_data(
