@@ -713,6 +713,7 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
             audio_urls=audio_urls,
             credits_spent=credits_spent,
             song_titles=song_titles,
+            suno_audio_ids=song_ids,
         )
 
         # For paid generations, mark as unlocked immediately
@@ -1144,19 +1145,28 @@ async def cb_buy_track(callback: CallbackQuery):
             await callback.answer("✅ Трек куплен!")
 
             # Trigger video generation if enabled
-            if config.video_generation_enabled and gen.get("suno_song_ids"):
+            if config.video_generation_enabled and gen.get("suno_song_ids") and gen.get("suno_audio_ids"):
                 try:
                     client = get_suno_client()
                     from app.handlers.callback import register_video_task
                     task_id = gen["suno_song_ids"][0]
+                    audio_ids = gen["suno_audio_ids"]
                     get_bot = lambda b=callback.bot: b
-                    video_result = await client.generate_video(task_id, task_id)
-                    register_video_task(
-                        video_result["task_id"],
-                        callback.message.chat.id,
-                        title,
-                        get_bot,
-                    )
+                    for i in range(min(2, len(audio_ids))):
+                        if not audio_ids[i]:
+                            continue
+                        try:
+                            titles = gen.get("song_titles") or []
+                            t = titles[i] if i < len(titles) else title
+                            video_result = await client.generate_video(task_id, audio_ids[i])
+                            register_video_task(
+                                video_result["task_id"],
+                                callback.message.chat.id,
+                                t,
+                                get_bot,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Video generation after unlock failed for track {i}: {e}")
                     await callback.message.answer(
                         "🎬 <b>Генерирую видеоклип...</b>\nВидео будет отправлено, когда будет готово.",
                         parse_mode="HTML",
@@ -1297,7 +1307,7 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         )
 
         await db.update_last_generation(user_id)
-        await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1, song_titles=song_titles)
+        await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1, song_titles=song_titles, suno_audio_ids=song_ids)
 
         # Delete status message
         try:

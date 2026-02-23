@@ -108,20 +108,27 @@ async def on_successful_payment(message: Message):
                     )
 
                     # Trigger video generation if enabled
-                    if config.video_generation_enabled and gen.get("suno_song_ids"):
+                    if config.video_generation_enabled and gen.get("suno_song_ids") and gen.get("suno_audio_ids"):
                         try:
                             from app.suno_api import get_suno_client
                             from app.handlers.callback import register_video_task
                             client = get_suno_client()
                             task_id = gen["suno_song_ids"][0]
+                            audio_ids = gen["suno_audio_ids"]
                             get_bot = lambda b=message.bot: b
-                            video_result = await client.generate_video(task_id, task_id)
-                            register_video_task(
-                                video_result["task_id"],
-                                message.chat.id,
-                                title,
-                                get_bot,
-                            )
+                            for vi in range(min(2, len(audio_ids))):
+                                if not audio_ids[vi]:
+                                    continue
+                                try:
+                                    video_result = await client.generate_video(task_id, audio_ids[vi])
+                                    register_video_task(
+                                        video_result["task_id"],
+                                        message.chat.id,
+                                        title,
+                                        get_bot,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Video gen after Stars unlock failed for track {vi}: {e}")
                         except Exception as e:
                             logger.warning(f"Video gen after Stars unlock failed: {e}")
 

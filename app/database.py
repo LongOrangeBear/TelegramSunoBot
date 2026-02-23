@@ -110,6 +110,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='song_titles') THEN
         ALTER TABLE generations ADD COLUMN song_titles TEXT[];
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='suno_audio_ids') THEN
+        ALTER TABLE generations ADD COLUMN suno_audio_ids TEXT[];
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS balance_transactions (
@@ -286,6 +289,10 @@ async def update_generation_status(gen_id: int, status: str, **kwargs):
     if "song_titles" in kwargs:
         sets.append(f"song_titles = ${idx}")
         values.append(kwargs["song_titles"])
+        idx += 1
+    if "suno_audio_ids" in kwargs:
+        sets.append(f"suno_audio_ids = ${idx}")
+        values.append(kwargs["suno_audio_ids"])
         idx += 1
     if status in ("complete", "error"):
         sets.append(f"completed_at = ${idx}")

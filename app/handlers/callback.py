@@ -140,6 +140,7 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
             audio_urls=audio_urls,
             credits_spent=credits_spent,
             song_titles=song_titles,
+            suno_audio_ids=song_ids,
         )
 
         # For paid generations, mark as unlocked immediately
