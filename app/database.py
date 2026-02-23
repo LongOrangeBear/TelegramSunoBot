@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS generations (
     status        VARCHAR(20) NOT NULL DEFAULT 'pending',
     audio_urls    TEXT[],
     tg_file_ids   TEXT[],
+    song_titles   TEXT[],
     credits_spent INTEGER NOT NULL DEFAULT 0,
     rating        INTEGER,
     error_message TEXT,
@@ -105,6 +106,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='is_unlocked') THEN
         ALTER TABLE generations ADD COLUMN is_unlocked BOOLEAN NOT NULL DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='song_titles') THEN
+        ALTER TABLE generations ADD COLUMN song_titles TEXT[];
     END IF;
 END $$;
 
@@ -278,6 +282,10 @@ async def update_generation_status(gen_id: int, status: str, **kwargs):
     if "error_message" in kwargs:
         sets.append(f"error_message = ${idx}")
         values.append(kwargs["error_message"])
+        idx += 1
+    if "song_titles" in kwargs:
+        sets.append(f"song_titles = ${idx}")
+        values.append(kwargs["song_titles"])
         idx += 1
     if status in ("complete", "error"):
         sets.append(f"completed_at = ${idx}")

@@ -712,6 +712,7 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
             gen_id, "complete",
             audio_urls=audio_urls,
             credits_spent=credits_spent,
+            song_titles=song_titles,
         )
 
         # For paid generations, mark as unlocked immediately
@@ -950,7 +951,8 @@ async def cb_download(callback: CallbackQuery):
             resp.raise_for_status()
             audio_data = resp.content
 
-        title = gen.get("prompt", "AI Melody Track")[:60]
+        titles = gen.get("song_titles") or []
+        title = titles[idx] if idx < len(titles) else f"AI Melody Track"
         doc_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
         await callback.message.answer_document(
             doc_file,
@@ -1032,7 +1034,8 @@ async def cb_download(callback: CallbackQuery):
             resp.raise_for_status()
             audio_data = resp.content
 
-        title = gen.get("prompt", "AI Melody Track")[:60]
+        titles = gen.get("song_titles") or []
+        title = titles[idx] if idx < len(titles) else f"AI Melody Track"
         audio_file = BufferedInputFile(
             audio_data,
             filename=f"{title}.mp3",
@@ -1088,7 +1091,8 @@ async def cb_buy_track(callback: CallbackQuery):
                     resp = await http.get(url, timeout=60.0)
                     resp.raise_for_status()
                     audio_data = resp.content
-                title = gen.get("prompt", "AI Melody Track")[:60]
+                titles = gen.get("song_titles") or []
+                title = titles[i] if i < len(titles) else f"AI Melody (вариант {i+1})"
                 track_title = f"{title} (вариант {i+1})"
                 audio_file = BufferedInputFile(audio_data, filename=f"{track_title}.mp3")
                 caption = UNLOCK_SUCCESS if i == 0 else ""
@@ -1126,7 +1130,8 @@ async def cb_buy_track(callback: CallbackQuery):
                     resp.raise_for_status()
                     audio_data = resp.content
 
-                title = gen.get("prompt", "AI Melody Track")[:60]
+                titles = gen.get("song_titles") or []
+                title = titles[i] if i < len(titles) else f"AI Melody (вариант {i+1})"
                 track_title = f"{title} (вариант {i+1})"
                 audio_file = BufferedInputFile(audio_data, filename=f"{track_title}.mp3")
                 caption = UNLOCK_SUCCESS if i == 0 else ""
@@ -1292,7 +1297,7 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         )
 
         await db.update_last_generation(user_id)
-        await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1)
+        await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1, song_titles=song_titles)
 
         # Delete status message
         try:
