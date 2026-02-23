@@ -77,6 +77,10 @@ class Config:
     # Video generation (MP4) after audio is ready
     video_generation_enabled: bool = os.getenv("VIDEO_GENERATION_ENABLED", "0") == "1"
 
+    # Unlock price for preview tracks (free generations)
+    unlock_price_stars: int = int(os.getenv("UNLOCK_PRICE_STARS", "75"))
+    unlock_price_rub: int = int(os.getenv("UNLOCK_PRICE_RUB", "100"))
+
     # Admin panel
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     admin_port: int = int(os.getenv("ADMIN_PORT", "8080"))
@@ -97,18 +101,18 @@ class Config:
         if self.suno_model not in self.available_models:
             self.suno_model = self.available_models[0]
         self.credit_packages = [
-            {"credits": 1, "stars": 50, "label": "1🎵 — ⭐50"},
-            {"credits": 3, "stars": 140, "label": "3🎵 — ⭐140"},
-            {"credits": 5, "stars": 225, "label": "5🎵 — ⭐225"},
-            {"credits": 10, "stars": 400, "label": "10🎵 — ⭐400"},
-            {"credits": 50, "stars": 1500, "label": "50🎵 — ⭐1500"},
+            {"credits": 1, "stars": 75, "label": "1🎵 — ⭐75"},
+            {"credits": 3, "stars": 210, "label": "3🎵 — ⭐210"},
+            {"credits": 5, "stars": 325, "label": "5🎵 — ⭐325"},
+            {"credits": 10, "stars": 600, "label": "10🎵 — ⭐600"},
+            {"credits": 50, "stars": 2500, "label": "50🎵 — ⭐2500"},
         ]
         self.credit_packages_rub = [
-            {"credits": 1, "rub": 50, "label": "1🎵 — 50₽"},
-            {"credits": 3, "rub": 140, "label": "3🎵 — 140₽"},
-            {"credits": 5, "rub": 225, "label": "5🎵 — 225₽"},
-            {"credits": 10, "rub": 400, "label": "10🎵 — 400₽"},
-            {"credits": 50, "rub": 1500, "label": "50🎵 — 1500₽"},
+            {"credits": 1, "rub": 100, "label": "1🎵 — 100₽"},
+            {"credits": 3, "rub": 280, "label": "3🎵 — 280₽"},
+            {"credits": 5, "rub": 450, "label": "5🎵 — 450₽"},
+            {"credits": 10, "rub": 800, "label": "10🎵 — 800₽"},
+            {"credits": 50, "rub": 3500, "label": "50🎵 — 3500₽"},
         ]
         self.tbank_enabled = bool(self.tbank_terminal_key)
 

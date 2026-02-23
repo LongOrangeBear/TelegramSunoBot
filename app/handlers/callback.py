@@ -8,9 +8,13 @@ from aiohttp import web
 
 from app import database as db
 from app.config import config
-from app.keyboards import track_kb, after_generation_kb
+from app.keyboards import track_kb, after_generation_kb, preview_track_kb, preview_after_generation_kb
 from app.suno_api import get_suno_client
-from app.texts import GENERATION_COMPLETE, GENERATION_ERROR
+from app.audio_preview import create_preview
+from app.texts import (
+    GENERATION_COMPLETE, GENERATION_ERROR,
+    PREVIEW_CAPTION, PREVIEW_GENERATION_COMPLETE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,28 +117,38 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
             logger.warning(f"Callback: no audio URLs in data for task_id={task_id}")
             return web.json_response({"status": "ok"})
 
-        # Deduct credit
+        # Deduct credit (free = preview only, paid = full MP3)
         user = await db.get_user(user_id)
+        is_free = False
         if user:
-            if user["free_generations_left"] > 0:
+            is_free = user["free_generations_left"] > 0
+            if is_free:
                 await db.use_free_generation(user_id)
+                await db.log_balance_transaction(
+                    user_id, -1, 'free_generation', f'Бесплатная генерация #{gen_id}',
+                )
             else:
                 await db.update_user_credits(user_id, -1)
-            await db.log_balance_transaction(
-                user_id, -1, 'generation', f'Генерация #{gen_id}',
-            )
+                await db.log_balance_transaction(
+                    user_id, -1, 'generation', f'Генерация #{gen_id}',
+                )
             await db.update_last_generation(user_id)
 
+        credits_spent = 0 if is_free else 1
         await db.update_generation_status(
             gen_id, "complete",
             audio_urls=audio_urls,
-            credits_spent=1,
+            credits_spent=credits_spent,
         )
+
+        # For paid generations, mark as unlocked immediately
+        if not is_free:
+            await db.unlock_generation(gen_id)
 
         # Send result to user via bot asynchronously (don't block the 200 response)
         if bot and gen.get("callback_chat_id"):
             asyncio.create_task(
-                _deliver_result_to_user(bot, gen, gen_id, audio_urls, image_urls, song_titles, song_ids, task_id)
+                _deliver_result_to_user(bot, gen, gen_id, audio_urls, image_urls, song_titles, song_ids, task_id, is_free)
             )
 
         logger.info(f"Callback: generation {gen_id} completed with {len(audio_urls)} tracks")
@@ -224,8 +238,9 @@ async def _deliver_result_to_user(
     bot, gen: dict, gen_id: int,
     audio_urls: list[str], image_urls: list[str], song_titles: list[str],
     song_ids: list[str] = None, original_task_id: str = "",
+    is_free: bool = False,
 ):
-    """Send generation results to the user in Telegram — SoNata-style (runs as background task)."""
+    """Send generation results to the user in Telegram (runs as background task)."""
     chat_id = gen["callback_chat_id"]
     status_msg_id = gen.get("callback_message_id")
 
@@ -239,7 +254,6 @@ async def _deliver_result_to_user(
             except Exception:
                 pass
 
-        # SoNata-style delivery: per track — image, then audio with buttons
         for i, url in enumerate(audio_urls[:2]):
             if not url:
                 continue
@@ -259,40 +273,63 @@ async def _deliver_result_to_user(
                     except Exception as e:
                         logger.warning(f"Callback: failed to send cover {i}: {e}")
 
-                # Download and send audio file
+                # Download audio
                 async with httpx.AsyncClient() as http:
                     resp = await http.get(url, timeout=60.0)
                     resp.raise_for_status()
                     audio_data = resp.content
 
-                audio_file = BufferedInputFile(
-                    audio_data,
-                    filename=f"{title}.mp3",
-                )
-                await bot.send_audio(
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    title=title,
-                    performer="AI Melody",
-                    reply_markup=track_kb(gen_id, i),
-                )
+                if is_free:
+                    # ─── FREE: Send voice preview ───
+                    preview_data = await create_preview(audio_data)
+                    voice_file = BufferedInputFile(
+                        preview_data,
+                        filename=f"preview_{i+1}.ogg",
+                    )
+                    await bot.send_voice(
+                        chat_id=chat_id,
+                        voice=voice_file,
+                        caption=PREVIEW_CAPTION.format(title=title),
+                        parse_mode="HTML",
+                        reply_markup=preview_track_kb(gen_id, i),
+                    )
+                else:
+                    # ─── PAID: Send full MP3 ───
+                    audio_file = BufferedInputFile(
+                        audio_data,
+                        filename=f"{title}.mp3",
+                    )
+                    await bot.send_audio(
+                        chat_id=chat_id,
+                        audio=audio_file,
+                        title=title,
+                        performer="AI Melody",
+                        reply_markup=track_kb(gen_id, i),
+                    )
             except Exception as e:
                 logger.error(f"Callback: failed to send track {i}: {e}")
 
         # Send after-generation keyboard
-        await bot.send_message(
-            chat_id=chat_id,
-            text=GENERATION_COMPLETE,
-            parse_mode="HTML",
-            reply_markup=after_generation_kb(gen_id),
-        )
+        if is_free:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=PREVIEW_GENERATION_COMPLETE,
+                parse_mode="HTML",
+                reply_markup=preview_after_generation_kb(gen_id),
+            )
+        else:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=GENERATION_COMPLETE,
+                parse_mode="HTML",
+                reply_markup=after_generation_kb(gen_id),
+            )
 
-        # Video generation (if enabled) — fire-and-forget, delivery via /callback/video
-        logger.info(f"Callback video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, original_task_id={original_task_id}")
-        if config.video_generation_enabled and original_task_id and song_ids:
+        # Video generation (if enabled and PAID) — fire-and-forget
+        if not is_free and config.video_generation_enabled and original_task_id and song_ids:
+            logger.info(f"Callback video check: enabled={config.video_generation_enabled}, song_ids={song_ids}")
             try:
                 client = get_suno_client()
-                # Get bot getter from the module-level bot reference
                 get_bot = lambda b=bot: b
                 for i, url in enumerate(audio_urls[:2]):
                     if not url or i >= len(song_ids) or not song_ids[i]:

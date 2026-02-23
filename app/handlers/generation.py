@@ -13,6 +13,7 @@ from app import database as db
 from app.config import config
 from app.keyboards import (
     mode_kb, gender_kb, style_kb, track_kb, history_track_kb, after_generation_kb,
+    preview_track_kb, preview_after_generation_kb,
     main_reply_kb, greeting_recipient_kb, greeting_occasion_kb, greeting_mood_kb,
     GREETING_OCCASION_LABELS, GREETING_MOOD_LABELS,
     stories_vibe_kb, stories_mood_kb, stories_name_kb,
@@ -20,6 +21,7 @@ from app.keyboards import (
 )
 from app.states import GenerationStates
 from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
+from app.audio_preview import create_preview
 from app.texts import (
     CHOOSE_MODE, CHOOSE_GENDER, CHOOSE_STYLE,
     ENTER_PROMPT, ENTER_LYRICS, ENTER_CUSTOM_STYLE,
@@ -28,6 +30,8 @@ from app.texts import (
     RATE_LIMIT_USER, RATE_LIMIT_GLOBAL,
     HISTORY_EMPTY, HISTORY_HEADER, DOWNLOAD_SUCCESS, DOWNLOAD_NO_CREDITS,
     RATING_THANKS,
+    PREVIEW_CAPTION, PREVIEW_GENERATION_COMPLETE,
+    UNLOCK_SUCCESS, UNLOCK_NO_CREDITS, UNLOCK_ALREADY,
     GREETING_CHOOSE_RECIPIENT, GREETING_ENTER_NAME,
     GREETING_ENTER_CUSTOM_RECIPIENT,
     GREETING_CHOOSE_OCCASION, GREETING_ENTER_CUSTOM_OCCASION,
@@ -655,20 +659,32 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
             song_titles.append(s.get("title", f"AI Melody Track"))
             song_ids.append(s.get("id", ""))
 
-        if user["free_generations_left"] > 0:
+        # Determine if this is a free generation (preview) or paid (full MP3)
+        is_free = user["free_generations_left"] > 0
+
+        if is_free:
             await db.use_free_generation(user_id)
+            await db.log_balance_transaction(
+                user_id, -1, 'free_generation', f'Бесплатная генерация #{gen_id}',
+            )
+            credits_spent = 0
         else:
             await db.update_user_credits(user_id, -1)
-        await db.log_balance_transaction(
-            user_id, -1, 'generation', f'Генерация #{gen_id}',
-        )
+            await db.log_balance_transaction(
+                user_id, -1, 'generation', f'Генерация #{gen_id}',
+            )
+            credits_spent = 1
 
         await db.update_last_generation(user_id)
         await db.update_generation_status(
             gen_id, "complete",
             audio_urls=audio_urls,
-            credits_spent=1,
+            credits_spent=credits_spent,
         )
+
+        # For paid generations, mark as unlocked immediately
+        if not is_free:
+            await db.unlock_generation(gen_id)
 
         # Delete status message
         try:
@@ -676,49 +692,94 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
         except Exception:
             pass
 
-        # SoNata-style delivery: per track — image, then audio with buttons
-        for i, url in enumerate(audio_urls[:2]):
-            if not url:
-                continue
-            try:
-                # Send cover image if available
-                img_url = image_urls[i] if i < len(image_urls) else ""
-                title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
-                if img_url:
-                    try:
-                        await message.answer_photo(
-                            photo=img_url,
-                            caption=f"🎵 Обложка для трека: <b>{title}</b>",
-                            parse_mode="HTML",
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send cover image {i}: {e}")
+        if is_free:
+            # ─── FREE: Send voice previews (30 sec) ───
+            for i, url in enumerate(audio_urls[:2]):
+                if not url:
+                    continue
+                try:
+                    img_url = image_urls[i] if i < len(image_urls) else ""
+                    title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
 
-                # Send audio file with track keyboard
-                async with httpx.AsyncClient() as http:
-                    resp = await http.get(url, timeout=60.0)
-                    resp.raise_for_status()
-                    audio_data = resp.content
+                    # Send cover image if available
+                    if img_url:
+                        try:
+                            await message.answer_photo(
+                                photo=img_url,
+                                caption=f"🎵 Обложка для трека: <b>{title}</b>",
+                                parse_mode="HTML",
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to send cover image {i}: {e}")
 
-                audio_file = BufferedInputFile(
-                    audio_data,
-                    filename=f"{title}.mp3",
-                )
-                await message.answer_audio(
-                    audio_file,
-                    title=title,
-                    performer="AI Melody",
-                    reply_markup=track_kb(gen_id, i),
-                )
-            except Exception as e:
-                logger.error(f"Failed to send track {i}: {e}")
+                    # Download audio and create 30-sec preview
+                    async with httpx.AsyncClient() as http:
+                        resp = await http.get(url, timeout=60.0)
+                        resp.raise_for_status()
+                        audio_data = resp.content
 
-        # Send after-generation keyboard
-        await message.answer(
-            GENERATION_COMPLETE,
-            parse_mode="HTML",
-            reply_markup=after_generation_kb(gen_id),
-        )
+                    preview_data = await create_preview(audio_data)
+                    voice_file = BufferedInputFile(
+                        preview_data,
+                        filename=f"preview_{i+1}.ogg",
+                    )
+                    await message.answer_voice(
+                        voice_file,
+                        caption=PREVIEW_CAPTION.format(title=title),
+                        parse_mode="HTML",
+                        reply_markup=preview_track_kb(gen_id, i),
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send preview {i}: {e}")
+
+            # Send preview after-generation keyboard
+            await message.answer(
+                PREVIEW_GENERATION_COMPLETE,
+                parse_mode="HTML",
+                reply_markup=preview_after_generation_kb(gen_id),
+            )
+        else:
+            # ─── PAID: Send full MP3 (current behavior) ───
+            for i, url in enumerate(audio_urls[:2]):
+                if not url:
+                    continue
+                try:
+                    img_url = image_urls[i] if i < len(image_urls) else ""
+                    title = song_titles[i] if i < len(song_titles) else f"Вариант {i+1}"
+                    if img_url:
+                        try:
+                            await message.answer_photo(
+                                photo=img_url,
+                                caption=f"🎵 Обложка для трека: <b>{title}</b>",
+                                parse_mode="HTML",
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to send cover image {i}: {e}")
+
+                    async with httpx.AsyncClient() as http:
+                        resp = await http.get(url, timeout=60.0)
+                        resp.raise_for_status()
+                        audio_data = resp.content
+
+                    audio_file = BufferedInputFile(
+                        audio_data,
+                        filename=f"{title}.mp3",
+                    )
+                    await message.answer_audio(
+                        audio_file,
+                        title=title,
+                        performer="AI Melody",
+                        reply_markup=track_kb(gen_id, i),
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send track {i}: {e}")
+
+            # Send after-generation keyboard
+            await message.answer(
+                GENERATION_COMPLETE,
+                parse_mode="HTML",
+                reply_markup=after_generation_kb(gen_id),
+            )
 
         # Video generation (if enabled)
         logger.info(f"Video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, task_id={task_id}")
@@ -904,6 +965,123 @@ async def cb_download(callback: CallbackQuery):
             callback.from_user.id, 1, 'refund', f'Возврат за ошибку скачивания #{gen_id}',
         )
         await callback.answer("Ошибка скачивания. Кредит возвращён.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("buy_track:"))
+async def cb_buy_track(callback: CallbackQuery):
+    """Buy full track from preview — send Telegram Stars invoice."""
+    parts = callback.data.split(":")
+    gen_id = int(parts[1])
+    idx = int(parts[2])
+
+    user = await db.get_user(callback.from_user.id)
+    if not user:
+        await callback.answer("Используйте /start", show_alert=True)
+        return
+
+    gen = await db.get_generation(gen_id)
+    if not gen or not gen.get("audio_urls"):
+        await callback.answer("Трек не найден", show_alert=True)
+        return
+
+    # Check ownership
+    if gen["user_id"] != callback.from_user.id:
+        await callback.answer("Это не ваш трек", show_alert=True)
+        return
+
+    # Check if already unlocked
+    if gen.get("is_unlocked"):
+        await callback.answer(UNLOCK_ALREADY, show_alert=True)
+        # Re-send the full track anyway
+        urls = gen["audio_urls"]
+        if idx < len(urls) and urls[idx]:
+            try:
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(urls[idx], timeout=60.0)
+                    resp.raise_for_status()
+                    audio_data = resp.content
+                title = gen.get("prompt", "AI Melody Track")[:60]
+                audio_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
+                await callback.message.answer_audio(
+                    audio_file, caption=UNLOCK_SUCCESS,
+                    title=title, performer="AI Melody",
+                    parse_mode="HTML",
+                    reply_markup=track_kb(gen_id, idx),
+                )
+            except Exception as e:
+                logger.error(f"Re-send unlocked track error: {e}")
+        return
+
+    urls = gen["audio_urls"]
+    if idx >= len(urls) or not urls[idx]:
+        await callback.answer("Трек недоступен", show_alert=True)
+        return
+
+    # Check if user has credits to buy
+    price = config.unlock_price_stars
+    if user["credits"] >= 1:
+        # Pay with existing credits
+        await db.update_user_credits(callback.from_user.id, -1)
+        await db.log_balance_transaction(
+            callback.from_user.id, -1, 'unlock', f'Покупка трека #{gen_id}',
+        )
+        await db.unlock_generation(gen_id)
+
+        # Send full MP3
+        try:
+            async with httpx.AsyncClient() as http:
+                resp = await http.get(urls[idx], timeout=60.0)
+                resp.raise_for_status()
+                audio_data = resp.content
+
+            title = gen.get("prompt", "AI Melody Track")[:60]
+            audio_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
+            await callback.message.answer_audio(
+                audio_file, caption=UNLOCK_SUCCESS,
+                title=title, performer="AI Melody",
+                parse_mode="HTML",
+                reply_markup=track_kb(gen_id, idx),
+            )
+            await callback.answer("✅ Трек куплен!")
+
+            # Trigger video generation if enabled
+            if config.video_generation_enabled and gen.get("suno_song_ids"):
+                try:
+                    client = get_suno_client()
+                    from app.handlers.callback import register_video_task
+                    task_id = gen["suno_song_ids"][0]
+                    # Find the song_id for this specific track
+                    # For now, use the task_id
+                    get_bot = lambda b=callback.bot: b
+                    video_result = await client.generate_video(task_id, task_id)
+                    register_video_task(
+                        video_result["task_id"],
+                        callback.message.chat.id,
+                        title,
+                        get_bot,
+                    )
+                except Exception as e:
+                    logger.warning(f"Video generation after unlock failed: {e}")
+
+        except Exception as e:
+            logger.error(f"Unlock track delivery error: {e}")
+            # Refund
+            await db.update_user_credits(callback.from_user.id, 1)
+            await db.log_balance_transaction(
+                callback.from_user.id, 1, 'refund', f'Возврат за ошибку покупки #{gen_id}',
+            )
+            await callback.answer("Ошибка доставки трека. Кредит возвращён.", show_alert=True)
+    else:
+        # No credits — suggest buying via Stars
+        from aiogram.types import LabeledPrice
+        await callback.message.answer_invoice(
+            title="🎵 Полный трек",
+            description="Разблокировка полной версии трека в MP3",
+            payload=f"unlock:{gen_id}:{idx}",
+            currency="XTR",
+            prices=[LabeledPrice(label="Полный трек", amount=price)],
+        )
+        await callback.answer()
 
 
 @router.callback_query(F.data.startswith("regenerate:"))

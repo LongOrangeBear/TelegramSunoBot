@@ -3,18 +3,21 @@
 import logging
 import uuid
 
+import httpx
 from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery, LabeledPrice,
     PreCheckoutQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    BufferedInputFile,
 )
 
 from app import database as db
 from app.config import config
-from app.keyboards import main_reply_kb, balance_kb, card_kb
+from app.keyboards import main_reply_kb, balance_kb, card_kb, track_kb
 from app.texts import (
     PAYMENT_SUCCESS, NO_CREDITS, BUY_CARD_HEADER,
     TBANK_PAYMENT_LINK, TBANK_PAYMENT_ERROR,
+    UNLOCK_SUCCESS,
 )
 
 router = Router()
@@ -60,33 +63,105 @@ async def on_pre_checkout(pre_checkout_query: PreCheckoutQuery):
 
 @router.message(F.successful_payment)
 async def on_successful_payment(message: Message):
-    """Handle successful payment — add credits."""
+    """Handle successful payment — add credits or unlock track."""
     payment = message.successful_payment
-    payload = payment.invoice_payload  # "credits_5_50"
+    payload = payment.invoice_payload
 
-    parts = payload.split("_")
-    credits = int(parts[1])
-    stars = int(parts[2])
+    if payload.startswith("unlock:"):
+        # ─── Track unlock payment ───
+        parts = payload.split(":")
+        gen_id = int(parts[1])
+        idx = int(parts[2])
 
-    await db.create_payment(
-        user_id=message.from_user.id,
-        tg_payment_id=payment.telegram_payment_charge_id,
-        stars=stars,
-        credits=credits,
-    )
+        # Record the payment
+        await db.create_payment(
+            user_id=message.from_user.id,
+            tg_payment_id=payment.telegram_payment_charge_id,
+            stars=payment.total_amount,
+            credits=0,  # Not adding credits, direct unlock
+        )
 
-    user = await db.get_user(message.from_user.id)
-    balance = user["credits"] + user["free_generations_left"]
+        await db.unlock_generation(gen_id)
+        await db.log_balance_transaction(
+            message.from_user.id, 0, 'unlock_stars',
+            f'Покупка трека #{gen_id} за {payment.total_amount}⭐',
+        )
 
-    await message.answer(
-        PAYMENT_SUCCESS.format(credits=credits, stars=stars, balance=balance),
-        parse_mode="HTML",
-        reply_markup=main_reply_kb(),
-    )
-    logger.info(
-        f"Payment: user={message.from_user.id} credits={credits} stars={stars} "
-        f"charge_id={payment.telegram_payment_charge_id}"
-    )
+        # Deliver the full track
+        gen = await db.get_generation(gen_id)
+        if gen and gen.get("audio_urls"):
+            urls = gen["audio_urls"]
+            if idx < len(urls) and urls[idx]:
+                try:
+                    async with httpx.AsyncClient() as http:
+                        resp = await http.get(urls[idx], timeout=60.0)
+                        resp.raise_for_status()
+                        audio_data = resp.content
+
+                    title = gen.get("prompt", "AI Melody Track")[:60]
+                    audio_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
+                    await message.answer_audio(
+                        audio_file, caption=UNLOCK_SUCCESS,
+                        title=title, performer="AI Melody",
+                        parse_mode="HTML",
+                        reply_markup=track_kb(gen_id, idx),
+                    )
+
+                    # Trigger video generation if enabled
+                    if config.video_generation_enabled and gen.get("suno_song_ids"):
+                        try:
+                            from app.suno_api import get_suno_client
+                            from app.handlers.callback import register_video_task
+                            client = get_suno_client()
+                            task_id = gen["suno_song_ids"][0]
+                            get_bot = lambda b=message.bot: b
+                            video_result = await client.generate_video(task_id, task_id)
+                            register_video_task(
+                                video_result["task_id"],
+                                message.chat.id,
+                                title,
+                                get_bot,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Video gen after Stars unlock failed: {e}")
+
+                except Exception as e:
+                    logger.error(f"Failed to deliver unlocked track: {e}")
+                    await message.answer(
+                        "❌ Ошибка доставки трека. Обратитесь в поддержку.",
+                        parse_mode="HTML",
+                    )
+
+        logger.info(
+            f"Unlock payment: user={message.from_user.id} gen_id={gen_id} "
+            f"stars={payment.total_amount} charge_id={payment.telegram_payment_charge_id}"
+        )
+
+    else:
+        # ─── Credit package purchase ───
+        parts = payload.split("_")
+        credits = int(parts[1])
+        stars = int(parts[2])
+
+        await db.create_payment(
+            user_id=message.from_user.id,
+            tg_payment_id=payment.telegram_payment_charge_id,
+            stars=stars,
+            credits=credits,
+        )
+
+        user = await db.get_user(message.from_user.id)
+        balance = user["credits"] + user["free_generations_left"]
+
+        await message.answer(
+            PAYMENT_SUCCESS.format(credits=credits, stars=stars, balance=balance),
+            parse_mode="HTML",
+            reply_markup=main_reply_kb(),
+        )
+        logger.info(
+            f"Payment: user={message.from_user.id} credits={credits} stars={stars} "
+            f"charge_id={payment.telegram_payment_charge_id}"
+        )
 
 
 # ─── T-Bank card payment flow ───

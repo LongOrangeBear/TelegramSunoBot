@@ -2,6 +2,7 @@
 
 import logging
 import subprocess
+import json
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -58,6 +59,35 @@ def _mode_label(g: dict) -> str:
     """Human-readable mode label from user_mode or mode."""
     mode = g.get("user_mode") or g.get("mode") or "description"
     return MODE_LABELS.get(mode, mode)
+
+
+def _full_prompt(g: dict) -> str:
+    """Extract full untruncated text from raw_input JSON, fallback to prompt."""
+    raw = g.get("raw_input")
+    if not raw:
+        return g.get("prompt") or ""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return g.get("prompt") or ""
+    # For description/lyrics mode: raw has {"text": ...}
+    if "text" in data:
+        return data["text"]
+    # For greeting/stories: build readable summary from all fields
+    parts = []
+    for key, val in data.items():
+        if val and key != "style_raw":
+            parts.append(f"{key}: {val}")
+    if data.get("style_raw"):
+        parts.append(f"style: {data['style_raw']}")
+    return "\n".join(parts) if parts else g.get("prompt") or ""
+
+
+def _was_truncated(g: dict) -> bool:
+    """Check if the user's input was truncated."""
+    full = _full_prompt(g)
+    prompt = g.get("prompt") or ""
+    return len(full) > len(prompt)
 
 
 # ─── HTML Templates ───
@@ -655,7 +685,9 @@ async def user_detail(request: web.Request):
     for g in data["generations"]:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
         prompt_text = g.get("prompt") or ""
+        full_text = _full_prompt(g)
         prompt_short = (prompt_text[:80] + "...") if len(prompt_text) > 80 else prompt_text
+        truncated_badge = ' <span style="color:#f59e0b;" title="Текст был обрезан">✂️</span>' if _was_truncated(g) else ""
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         error_text = g.get("error_message") or ""
         error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
@@ -663,8 +695,8 @@ async def user_detail(request: web.Request):
             <td>{g['id']}</td>
             <td>{_mode_label(g)}</td>
             <td class="prompt-cell" onclick="togglePrompt(this)">
-                <div class="prompt-short">{prompt_short}</div>
-                <div class="prompt-full">{prompt_text}</div>
+                <div class="prompt-short">{prompt_short}{truncated_badge}</div>
+                <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
             </td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
@@ -835,7 +867,9 @@ async def generations_list(request: web.Request):
     for g in gens:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
         prompt_text = g.get("prompt") or ""
+        full_text = _full_prompt(g)
         prompt_short = (prompt_text[:60] + "...") if len(prompt_text) > 60 else prompt_text
+        truncated_badge = ' <span style="color:#f59e0b;" title="Текст был обрезан">✂️</span>' if _was_truncated(g) else ""
         user_label = f"@{g['username']}" if g.get("username") else str(g["user_id"])
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         error_text = g.get("error_message") or ""
@@ -845,8 +879,8 @@ async def generations_list(request: web.Request):
             <td><a class="link" href="/admin/user/{g['user_id']}?{tp}">{user_label}</a></td>
             <td>{_mode_label(g)}</td>
             <td class="prompt-cell" onclick="togglePrompt(this)">
-                <div class="prompt-short">{prompt_short}</div>
-                <div class="prompt-full">{prompt_text}</div>
+                <div class="prompt-short">{prompt_short}{truncated_badge}</div>
+                <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
             </td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>

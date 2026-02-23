@@ -294,8 +294,28 @@ def stars_kb() -> InlineKeyboardMarkup:
 
 # ─── Result keyboard ───
 
+def preview_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
+    """Per-track keyboard for preview (free generation): buy + rate."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🎵 Купить полный трек — {config.unlock_price_stars}⭐",
+            callback_data=f"buy_track:{gen_id}:{idx}",
+        ),
+    )
+    # Rating row
+    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    rating_row = []
+    for i, label in enumerate(star_labels, 1):
+        rating_row.append(
+            InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
+        )
+    builder.row(*rating_row)
+    return builder.as_markup()
+
+
 def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
-    """Per-track inline keyboard: share + rate."""
+    """Per-track inline keyboard: share + rate (for paid/unlocked tracks)."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
@@ -316,6 +336,15 @@ def history_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
+    )
+    return builder.as_markup()
+
+
+def preview_after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
+    """Keyboard shown after preview tracks: create another (no regenerate for free)."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🎵 Создать другую", callback_data="create"),
     )
     return builder.as_markup()
 

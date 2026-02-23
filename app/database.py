@@ -103,6 +103,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='raw_input') THEN
         ALTER TABLE generations ADD COLUMN raw_input TEXT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='is_unlocked') THEN
+        ALTER TABLE generations ADD COLUMN is_unlocked BOOLEAN NOT NULL DEFAULT FALSE;
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS balance_transactions (
@@ -294,6 +297,26 @@ async def get_user_generations(user_id: int, limit: int = 10) -> list[dict]:
             user_id, limit,
         )
         return [dict(r) for r in rows]
+
+
+async def unlock_generation(gen_id: int) -> bool:
+    """Mark a generation as unlocked (purchased). Returns True if updated."""
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE generations SET is_unlocked = TRUE WHERE id = $1 AND is_unlocked = FALSE",
+            gen_id,
+        )
+        return result == "UPDATE 1"
+
+
+async def is_generation_unlocked(gen_id: int) -> bool:
+    """Check if a generation track has been unlocked."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT is_unlocked FROM generations WHERE id = $1",
+            gen_id,
+        )
+        return row["is_unlocked"] if row else False
 
 
 async def get_generation(gen_id: int) -> dict | None:
