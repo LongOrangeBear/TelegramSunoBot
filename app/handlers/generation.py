@@ -905,11 +905,11 @@ async def cb_rate(callback: CallbackQuery):
         from aiogram.types import InlineKeyboardButton
 
         builder = InlineKeyboardBuilder()
-        # Keep the share button from the original keyboard
+        # Keep the download button from the original keyboard
         if callback.message.reply_markup:
             for row in callback.message.reply_markup.inline_keyboard:
                 for btn in row:
-                    if btn.switch_inline_query is not None:
+                    if btn.callback_data and btn.callback_data.startswith("download:"):
                         builder.row(btn)
                         break
         # Replace rating row with a confirmed rating indicator
@@ -922,6 +922,44 @@ async def cb_rate(callback: CallbackQuery):
 
     await callback.answer(f"⭐ Оценка {rating}/5 сохранена!")
 
+
+@router.callback_query(F.data.startswith("download:"))
+async def cb_download(callback: CallbackQuery):
+    """Send the track as a document file for easy download/sharing."""
+    parts = callback.data.split(":")
+    gen_id = int(parts[1])
+    idx = int(parts[2])
+
+    gen = await db.get_generation(gen_id)
+    if not gen or not gen.get("audio_urls"):
+        await callback.answer("Трек не найден", show_alert=True)
+        return
+
+    if gen["user_id"] != callback.from_user.id:
+        await callback.answer("Это не ваш трек", show_alert=True)
+        return
+
+    urls = gen["audio_urls"]
+    if idx >= len(urls) or not urls[idx]:
+        await callback.answer("Трек недоступен", show_alert=True)
+        return
+
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.get(urls[idx], timeout=60.0)
+            resp.raise_for_status()
+            audio_data = resp.content
+
+        title = gen.get("prompt", "AI Melody Track")[:60]
+        doc_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
+        await callback.message.answer_document(
+            doc_file,
+            caption=f"🎶 {title}\n\n🤖 Создано в @{config.bot_username}",
+        )
+        await callback.answer("✅ Файл отправлен!")
+    except Exception as e:
+        logger.error(f"Download track error: {e}")
+        await callback.answer("Ошибка скачивания", show_alert=True)
 
 # ─── Result actions ───
 
@@ -1113,6 +1151,10 @@ async def cb_buy_track(callback: CallbackQuery):
                         callback.message.chat.id,
                         title,
                         get_bot,
+                    )
+                    await callback.message.answer(
+                        "🎬 <b>Генерирую видеоклип...</b>\nВидео будет отправлено, когда будет готово.",
+                        parse_mode="HTML",
                     )
                 except Exception as e:
                     logger.warning(f"Video generation after unlock failed: {e}")

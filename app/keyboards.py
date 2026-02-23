@@ -315,12 +315,12 @@ def preview_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
 
 
 def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
-    """Per-track inline keyboard: share + rate (for paid/unlocked tracks)."""
+    """Per-track inline keyboard: download + rate (for paid/unlocked tracks)."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="📤 Поделиться песней",
-            url=f"https://t.me/share/url?url=https://t.me/{config.bot_username}?start=track{gen_id}_{idx}&text=🎶 Послушай мою песню!",
+            text="⬇️ Скачать файл",
+            callback_data=f"download:{gen_id}:{idx}",
         ),
     )
     # Rating row
@@ -335,12 +335,12 @@ def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
 
 
 def history_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
-    """Per-track keyboard for history: share only (no rating)."""
+    """Per-track keyboard for history: download only."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="📤 Поделиться песней",
-            url=f"https://t.me/share/url?url=https://t.me/{config.bot_username}?start=track{gen_id}_{idx}&text=🎶 Послушай мою песню!",
+            text="⬇️ Скачать файл",
+            callback_data=f"download:{gen_id}:{idx}",
         ),
     )
     return builder.as_markup()
