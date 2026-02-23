@@ -49,6 +49,7 @@ SUNO_AVAILABLE_MODELS = ["V4", "V4_5", "V4_5PLUS", "V4_5ALL", "V5"]
 class Config:
     # Telegram
     bot_token: str = os.getenv("BOT_TOKEN", "")
+    bot_username: str = os.getenv("BOT_USERNAME", "ai_melody_bot")
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", "postgresql://ai_melody:ai_melody@localhost:5432/ai_melody")

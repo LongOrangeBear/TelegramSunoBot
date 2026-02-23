@@ -318,7 +318,10 @@ def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
     """Per-track inline keyboard: share + rate (for paid/unlocked tracks)."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
+        InlineKeyboardButton(
+            text="📤 Поделиться песней",
+            url=f"https://t.me/share/url?url=https://t.me/{config.bot_username}?start=track{gen_id}_{idx}&text=🎶 Послушай мою песню!",
+        ),
     )
     # Rating row
     star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
@@ -335,7 +338,10 @@ def history_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
     """Per-track keyboard for history: share only (no rating)."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="📤 Поделиться песней", switch_inline_query=f"track_{gen_id}_{idx}"),
+        InlineKeyboardButton(
+            text="📤 Поделиться песней",
+            url=f"https://t.me/share/url?url=https://t.me/{config.bot_username}?start=track{gen_id}_{idx}&text=🎶 Послушай мою песню!",
+        ),
     )
     return builder.as_markup()
 
