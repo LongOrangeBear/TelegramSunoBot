@@ -233,6 +233,26 @@ async def handle_tbank_notification(request: web.Request) -> web.Response:
 
                 logger.info(f"T-Bank payment completed: user={user_id}, "
                              f"credits={credits}, amount={amount_rub}₽, order={order_id}")
+
+                # Notify admins about T-Bank payment
+                username = user.get("username") if user else None
+                first_name = user.get("first_name") if user else None
+                user_link = f'<a href="tg://user?id={user_id}">{first_name or user_id}</a>'
+                if username:
+                    user_link += f" (@{username})"
+                admin_text = (
+                    f"💰 <b>Новая оплата!</b>\n\n"
+                    f"👤 {user_link}\n"
+                    f"📦 💳 Оплата картой (T-Bank)\n"
+                    f"💎 Сумма: {amount_rub}₽\n"
+                    f"🎵 Кредитов: {credits}\n"
+                )
+                for admin_id in config.admin_ids:
+                    try:
+                        await bot_instance.send_message(admin_id, admin_text, parse_mode="HTML")
+                    except Exception as e:
+                        logger.warning(f"Failed to notify admin {admin_id} about T-Bank payment: {e}")
+
             elif not payment:
                 logger.warning(f"T-Bank: no pending payment found for OrderId={order_id}")
 

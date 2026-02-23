@@ -24,6 +24,32 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
+async def _notify_admins_payment(
+    bot, user_id: int, username: str | None, first_name: str | None,
+    payment_type: str, amount_display: str, credits: int, extra: str = "",
+):
+    """Send payment notification to all admin IDs."""
+    user_link = f'<a href="tg://user?id={user_id}">{first_name or user_id}</a>'
+    if username:
+        user_link += f" (@{username})"
+    text = (
+        f"💰 <b>Новая оплата!</b>\n\n"
+        f"👤 {user_link}\n"
+        f"📦 {payment_type}\n"
+        f"💎 Сумма: {amount_display}\n"
+    )
+    if credits:
+        text += f"🎵 Кредитов: {credits}\n"
+    if extra:
+        text += f"{extra}\n"
+
+    for admin_id in config.admin_ids:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Failed to notify admin {admin_id} about payment: {e}")
+
+
 # ─── Telegram Stars flow ───
 
 @router.callback_query(F.data.startswith("buy_credits:"))
@@ -144,6 +170,18 @@ async def on_successful_payment(message: Message):
             f"stars={payment.total_amount} charge_id={payment.telegram_payment_charge_id}"
         )
 
+        # Notify admins
+        await _notify_admins_payment(
+            message.bot,
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            payment_type="🔓 Разблокировка трека",
+            amount_display=f"⭐{payment.total_amount}",
+            credits=0,
+            extra=f"🎵 Трек: #{gen_id}",
+        )
+
     else:
         # ─── Credit package purchase ───
         parts = payload.split("_")
@@ -168,6 +206,17 @@ async def on_successful_payment(message: Message):
         logger.info(
             f"Payment: user={message.from_user.id} credits={credits} stars={stars} "
             f"charge_id={payment.telegram_payment_charge_id}"
+        )
+
+        # Notify admins
+        await _notify_admins_payment(
+            message.bot,
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            payment_type="⭐ Покупка кредитов (Stars)",
+            amount_display=f"⭐{stars}",
+            credits=credits,
         )
 
 

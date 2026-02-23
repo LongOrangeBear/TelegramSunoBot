@@ -511,6 +511,10 @@ async def dashboard(request: web.Request):
             <div class="value" style="font-size: 18px; color: #60a5fa;">🚀 {last_deploy}</div>
             <div class="label">Последний деплой</div>
         </div>
+        <div class="stat-card" style="border-color: rgba(239, 68, 68, 0.4); background: linear-gradient(145deg, #2a0a0a 0%, #16162e 100%);">
+            <div class="value" style="color: #f87171;">🚫 {stats['blocked_count']}</div>
+            <div class="label">Заблокировали бота</div>
+        </div>
     </div>
 
     <div class="section-title">⚙️ Конфигурация {success_html}</div>
@@ -645,14 +649,15 @@ async def users_list(request: web.Request):
     rows = ""
     for u in users:
         total_credits = u["credits"] + u["free_generations_left"]
-        blocked = '<span class="badge badge-err">BAN</span>' if u["is_blocked"] else ""
+        blocked = '<span class="badge badge-err">🚫 BAN</span>' if u["is_blocked"] else ""
+        blocked_at_str = f' <span style="color:#6b7280;font-size:11px;">{fmt_date(u.get("blocked_at"))}</span>' if u["is_blocked"] and u.get("blocked_at") else ""
         ref_badge = f'<span class="badge badge-info">{u["referral_count"]}👥</span>' if u.get("referral_count", 0) > 0 else ""
         referred_src = f'<a class="link" href="/admin/user/{u["referred_by"]}?{tp}">👥 {u["referred_by"]}</a>' if u.get("referred_by") else "—"
         rows += f"""<tr>
             <td><a class="link" href="/admin/user/{u['telegram_id']}?{tp}">{u['telegram_id']}</a></td>
             <td>{u.get('username') or '—'}</td>
             <td>{u.get('first_name') or '—'}</td>
-            <td>{total_credits}🎵 {blocked}</td>
+            <td>{total_credits}🎵 {blocked}{blocked_at_str}</td>
             <td>{u['gen_count']}</td>
             <td>⭐{u['total_stars']}</td>
             <td>{u.get('total_rub', 0)}₽</td>
@@ -1308,12 +1313,29 @@ async def mass_credit_execute(request: web.Request):
                     err = str(e).lower()
                     if "blocked" in err or "deactivated" in err or "not found" in err:
                         blocked += 1
+                        await db.mark_user_blocked(uid)
                     else:
                         failed += 1
                 await asyncio.sleep(0.04)
             logger.info(
                 f"Mass credit notifications: sent={sent} blocked={blocked} failed={failed} total={total}"
             )
+
+            # Send final report to admins
+            report_text = (
+                f"📢 <b>Массовое начисление завершено!</b>\n\n"
+                f"🎵 Начислено: {amount}🎵 каждому\n"
+                f"👥 Всего: {total}\n"
+                f"✅ Доставлено: {sent}\n"
+                f"🚫 Заблокировали бота: {blocked}\n"
+                f"❌ Ошибки: {failed}"
+            )
+            from app.config import config as app_config
+            for admin_id in app_config.admin_ids:
+                try:
+                    await bot.send_message(admin_id, report_text, parse_mode="HTML")
+                except Exception:
+                    pass
 
         asyncio.create_task(_send_notifications())
 

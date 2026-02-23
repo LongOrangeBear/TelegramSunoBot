@@ -116,6 +116,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='user_comment') THEN
         ALTER TABLE generations ADD COLUMN user_comment TEXT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='blocked_at') THEN
+        ALTER TABLE users ADD COLUMN blocked_at TIMESTAMPTZ;
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS balance_transactions (
@@ -214,6 +217,19 @@ async def increment_content_violations(telegram_id: int) -> int:
             telegram_id,
         )
         return row["content_violations"]
+
+
+async def mark_user_blocked(telegram_id: int):
+    """Mark user as blocked (they blocked the bot). Sets is_blocked=TRUE and blocked_at."""
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE users SET is_blocked = TRUE, blocked_at = NOW()
+                   WHERE telegram_id = $1 AND is_blocked = FALSE""",
+                telegram_id,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to mark user {telegram_id} as blocked: {e}")
 
 
 async def count_referrals(telegram_id: int) -> int:
@@ -503,6 +519,9 @@ async def admin_get_stats() -> dict:
         avg_rating = await conn.fetchval(
             "SELECT ROUND(AVG(rating)::numeric, 1) FROM generations WHERE rating IS NOT NULL"
         )
+        blocked_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM users WHERE is_blocked = TRUE"
+        )
         return {
             "users_count": users_count,
             "gens_count": gens_count,
@@ -513,6 +532,7 @@ async def admin_get_stats() -> dict:
             "total_rub": total_rub,
             "total_credits_sold": total_credits_sold,
             "avg_rating": avg_rating or "—",
+            "blocked_count": blocked_count,
         }
 
 

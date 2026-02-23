@@ -97,6 +97,7 @@ async def on_broadcast_message(message: Message, state: FSMContext):
             error_str = str(e).lower()
             if "blocked" in error_str or "deactivated" in error_str or "not found" in error_str:
                 blocked += 1
+                await db.mark_user_blocked(user_id)
             else:
                 failed += 1
                 logger.warning(f"Broadcast to {user_id} failed: {e}")
