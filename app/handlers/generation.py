@@ -758,11 +758,12 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
                             preview_data,
                             filename=f"preview_{i+1}.ogg",
                         )
+                        bot_link = f"https://t.me/{config.bot_username}?start=ref{user_id}"
                         await message.answer_voice(
                             voice_file,
-                            caption=PREVIEW_CAPTION.format(title=title),
+                            caption=PREVIEW_CAPTION.format(title=title, bot_link=bot_link),
                             parse_mode="HTML",
-                            reply_markup=preview_track_kb(gen_id, i),
+                            reply_markup=preview_track_kb(gen_id, i, user_id=user_id),
                         )
                     except Exception as e:
                         logger.warning(f"Preview creation failed for track {i}, sending full audio as fallback: {e}")
@@ -771,13 +772,14 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
                             audio_data,
                             filename=f"{title}.mp3",
                         )
+                        bot_link = f"https://t.me/{config.bot_username}?start=ref{user_id}"
                         await message.answer_audio(
                             audio_file,
                             title=f"🎧 {title}",
                             performer="AI Melody",
-                            caption=PREVIEW_CAPTION.format(title=title),
+                            caption=PREVIEW_CAPTION.format(title=title, bot_link=bot_link),
                             parse_mode="HTML",
-                            reply_markup=preview_track_kb(gen_id, i),
+                            reply_markup=preview_track_kb(gen_id, i, user_id=user_id),
                         )
                 except Exception as e:
                     logger.error(f"Failed to send preview {i}: {e}")
@@ -815,11 +817,18 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
                         audio_data,
                         filename=f"{title}.mp3",
                     )
+                    bot_link = f"https://t.me/{config.bot_username}?start=ref{user_id}"
+                    paid_caption = (
+                        f"🎵 <a href=\"{bot_link}\">Создай свою песню с помощью ИИ</a> — "
+                        f"получи +1🎵 за каждого друга!"
+                    )
                     await message.answer_audio(
                         audio_file,
                         title=title,
                         performer="AI Melody",
-                        reply_markup=track_kb(gen_id, i),
+                        caption=paid_caption,
+                        parse_mode="HTML",
+                        reply_markup=track_kb(gen_id, i, user_id=user_id),
                     )
                 except Exception as e:
                     logger.error(f"Failed to send track {i}: {e}")
@@ -901,28 +910,70 @@ async def cb_rate(callback: CallbackQuery):
 
     await db.update_generation_rating(gen_id, rating)
 
-    # Remove rating buttons — replace with "rated" confirmation
+    # Update the after-generation keyboard: replace rating row with confirmation
     try:
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         from aiogram.types import InlineKeyboardButton
 
         builder = InlineKeyboardBuilder()
-        # Keep the download button from the original keyboard
+        builder.row(
+            InlineKeyboardButton(text=f"⭐ Ваша оценка: {rating}/5 — спасибо!", callback_data="noop")
+        )
+        # Keep other buttons (feedback, regenerate, create)
         if callback.message.reply_markup:
             for row in callback.message.reply_markup.inline_keyboard:
                 for btn in row:
-                    if btn.callback_data and btn.callback_data.startswith("download:"):
+                    if btn.callback_data and btn.callback_data.startswith(("feedback:", "regenerate:", "create")):
                         builder.row(btn)
                         break
-        # Replace rating row with a confirmed rating indicator
-        builder.row(
-            InlineKeyboardButton(text=f"⭐ Ваша оценка: {rating}/5", callback_data="noop")
-        )
         await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
     except Exception as e:
         logger.warning(f"Failed to update rating keyboard: {e}")
 
     await callback.answer(f"⭐ Оценка {rating}/5 сохранена!")
+
+
+@router.callback_query(F.data.startswith("feedback:"))
+async def cb_feedback(callback: CallbackQuery, state: FSMContext):
+    """Ask user to type their comment/feedback."""
+    gen_id = int(callback.data.split(":")[1])
+
+    gen = await db.get_generation(gen_id)
+    if not gen:
+        await callback.answer("Генерация не найдена", show_alert=True)
+        return
+
+    if gen["user_id"] != callback.from_user.id:
+        await callback.answer("Это не ваша генерация", show_alert=True)
+        return
+
+    await state.set_state(GenerationStates.awaiting_feedback)
+    await state.update_data(feedback_gen_id=gen_id)
+    await callback.message.answer(
+        "✍️ <b>Напишите ваш комментарий, жалобу или предложение:</b>\n\n"
+        "Мы читаем каждое сообщение и постоянно улучшаем бота.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(GenerationStates.awaiting_feedback)
+async def on_feedback_text(message: Message, state: FSMContext):
+    """Save user's feedback comment."""
+    data = await state.get_data()
+    gen_id = data.get("feedback_gen_id")
+    comment = message.text.strip()[:1000] if message.text else ""
+
+    if gen_id and comment:
+        await db.save_generation_comment(gen_id, comment)
+        logger.info(f"Feedback saved for gen {gen_id} from user {message.from_user.id}")
+
+    await state.clear()
+    await message.answer(
+        "🙏 <b>Спасибо, мы прочитаем, нам это важно!</b>",
+        parse_mode="HTML",
+        reply_markup=main_reply_kb(),
+    )
 
 
 @router.callback_query(F.data.startswith("download:"))
@@ -1101,7 +1152,7 @@ async def cb_buy_track(callback: CallbackQuery):
                     audio_file, caption=caption,
                     title=track_title, performer="AI Melody",
                     parse_mode="HTML",
-                    reply_markup=track_kb(gen_id, i),
+                    reply_markup=track_kb(gen_id, i, user_id=callback.from_user.id),
                 )
             except Exception as e:
                 logger.error(f"Re-send unlocked track {i} error: {e}")
@@ -1140,7 +1191,7 @@ async def cb_buy_track(callback: CallbackQuery):
                     audio_file, caption=caption,
                     title=track_title, performer="AI Melody",
                     parse_mode="HTML",
-                    reply_markup=track_kb(gen_id, i),
+                    reply_markup=track_kb(gen_id, i, user_id=callback.from_user.id),
                 )
             await callback.answer("✅ Трек куплен!")
 
@@ -1341,11 +1392,18 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
                     audio_data,
                     filename=f"{title}.mp3",
                 )
+                regen_bot_link = f"https://t.me/{config.bot_username}?start=ref{callback.from_user.id}"
+                regen_caption = (
+                    f"🎵 <a href=\"{regen_bot_link}\">Создай свою песню с помощью ИИ</a> — "
+                    f"получи +1🎵 за каждого друга!"
+                )
                 await callback.message.answer_audio(
                     audio_file,
                     title=title,
                     performer="AI Melody",
-                    reply_markup=track_kb(gen_id_new, i),
+                    caption=regen_caption,
+                    parse_mode="HTML",
+                    reply_markup=track_kb(gen_id_new, i, user_id=callback.from_user.id),
                 )
             except Exception as e:
                 logger.error(f"Regen track send error {i}: {e}")
@@ -1450,7 +1508,7 @@ async def show_history(message: Message):
                     parse_mode="HTML",
                     title=title,
                     performer="AI Melody",
-                    reply_markup=history_track_kb(gen_id, idx),
+                    reply_markup=history_track_kb(gen_id, idx, user_id=message.from_user.id),
                 )
                 sent_audio = True
             except Exception as e:

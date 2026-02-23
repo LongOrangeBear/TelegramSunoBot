@@ -17,7 +17,7 @@ from aiogram.types import BotCommand
 from app.config import config
 from app.database import init_db, close_db
 from app.suno_api import close_suno_client
-from app.handlers import common, generation, payments
+from app.handlers import common, generation, payments, broadcast
 from app.admin import create_admin_app
 from app.handlers.callback import handle_suno_callback, handle_video_callback
 from app.keyboards import main_reply_kb
@@ -46,6 +46,7 @@ async def on_startup(bot: Bot):
     logger.info("Database initialized")
 
     me = await bot.get_me()
+    config.bot_username = me.username
     logger.info(f"Bot @{me.username} started (id={me.id})")
 
     # Set only /start in the Telegram commands menu (removes old BotFather commands)
@@ -78,6 +79,7 @@ async def run_bot():
 
     # Register routers
     dp.include_router(common.router)
+    dp.include_router(broadcast.router)
     dp.include_router(generation.router)
     dp.include_router(payments.router)
 

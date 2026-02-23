@@ -90,6 +90,7 @@ class Config:
     # Admin panel
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     admin_port: int = int(os.getenv("ADMIN_PORT", "8080"))
+    admin_ids: list = None  # Telegram user IDs allowed to use /broadcast etc.
 
     # T-Bank (Tinkoff) acquiring
     tbank_terminal_key: str = os.getenv("TBANK_TERMINAL_KEY", "")
@@ -121,6 +122,12 @@ class Config:
             {"credits": 50, "rub": 3500, "label": "50🎵 — 3500₽"},
         ]
         self.tbank_enabled = bool(self.tbank_terminal_key)
+        # Admin user IDs (can override via env ADMIN_IDS=123,456)
+        env_ids = os.getenv("ADMIN_IDS", "")
+        if env_ids:
+            self.admin_ids = [int(x.strip()) for x in env_ids.split(",") if x.strip()]
+        else:
+            self.admin_ids = [1435774731]  # Denis @woofwoofmenot
 
 
 config = Config()

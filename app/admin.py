@@ -630,6 +630,7 @@ async def users_list(request: web.Request):
         total_credits = u["credits"] + u["free_generations_left"]
         blocked = '<span class="badge badge-err">BAN</span>' if u["is_blocked"] else ""
         ref_badge = f'<span class="badge badge-info">{u["referral_count"]}👥</span>' if u.get("referral_count", 0) > 0 else ""
+        referred_src = f'<a class="link" href="/admin/user/{u["referred_by"]}?{tp}">👥 {u["referred_by"]}</a>' if u.get("referred_by") else "—"
         rows += f"""<tr>
             <td><a class="link" href="/admin/user/{u['telegram_id']}?{tp}">{u['telegram_id']}</a></td>
             <td>{u.get('username') or '—'}</td>
@@ -639,6 +640,7 @@ async def users_list(request: web.Request):
             <td>⭐{u['total_stars']}</td>
             <td>{u.get('total_rub', 0)}₽</td>
             <td>{ref_badge}</td>
+            <td>{referred_src}</td>
             <td>{fmt_date(u['created_at'])}</td>
         </tr>"""
 
@@ -661,11 +663,12 @@ async def users_list(request: web.Request):
                 <th>Stars</th>
                 <th>Рубли</th>
                 <th>Рефералы</th>
+                <th>Источник</th>
                 <th>Регистрация</th>
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="9" class="empty">Нет пользователей</td></tr>'}
+            {rows if rows else '<tr><td colspan="10" class="empty">Нет пользователей</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>
@@ -721,6 +724,8 @@ async def user_detail(request: web.Request):
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         error_text = g.get("error_message") or ""
         error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
+        comment_text = g.get("user_comment") or ""
+        comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
             <td>{_mode_label(g)}</td>
@@ -733,6 +738,7 @@ async def user_detail(request: web.Request):
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
             <td>{rating_display}</td>
             <td>{g.get('credits_spent', 0)}🎵</td>
+            <td>{comment_html or '—'}</td>
             <td>{fmt_date(g['created_at'])}</td>
         </tr>"""
 
@@ -755,11 +761,18 @@ async def user_detail(request: web.Request):
             <td>{fmt_date(p['created_at'])}</td>
         </tr>"""
 
+    # Build referred_by badge
+    referred_by = user.get("referred_by")
+    if referred_by:
+        referred_html = f' <span class="badge badge-info" style="font-size:12px;">👥 от <a class="link" href="/admin/user/{referred_by}?{tp}" style="color:#60a5fa;">{referred_by}</a></span>'
+    else:
+        referred_html = ""
+
     content = f"""
     <div class="user-header">
         <div>
             <div class="name">{user.get('first_name', '—')} (@{user.get('username', '—')}){blocked_badge}</div>
-            <div class="tgid">ID: {user['telegram_id']}</div>
+            <div class="tgid">ID: {user['telegram_id']}{referred_html}</div>
         </div>
     </div>
 
@@ -814,11 +827,12 @@ async def user_detail(request: web.Request):
                 <th>Статус</th>
                 <th>Оценка</th>
                 <th>Кредиты</th>
+                <th>💬</th>
                 <th>Дата</th>
             </tr>
         </thead>
         <tbody>
-            {gen_rows if gen_rows else '<tr><td colspan="9" class="empty">Нет генераций</td></tr>'}
+            {gen_rows if gen_rows else '<tr><td colspan="10" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
 
@@ -908,6 +922,8 @@ async def generations_list(request: web.Request):
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         error_text = g.get("error_message") or ""
         error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
+        comment_text = g.get("user_comment") or ""
+        comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
         rows += f"""<tr>
             <td>{g['id']}</td>
             <td><a class="link" href="/admin/user/{g['user_id']}?{tp}">{user_label}</a></td>
@@ -921,6 +937,7 @@ async def generations_list(request: web.Request):
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
             <td>{rating_display}</td>
             <td>{g.get('credits_spent', 0)}🎵</td>
+            <td>{comment_html or '—'}</td>
             <td>{fmt_date(g['created_at'])}</td>
         </tr>"""
 
@@ -944,11 +961,12 @@ async def generations_list(request: web.Request):
                 <th>Статус</th>
                 <th>Оценка</th>
                 <th>Кредиты</th>
+                <th>💬</th>
                 <th>Дата</th>
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="10" class="empty">Нет генераций</td></tr>'}
+            {rows if rows else '<tr><td colspan="11" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>

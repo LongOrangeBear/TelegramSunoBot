@@ -244,6 +244,8 @@ async def _deliver_result_to_user(
 ):
     """Send generation results to the user in Telegram (runs as background task)."""
     chat_id = gen["callback_chat_id"]
+    user_id = gen["user_id"]
+    bot_link = f"https://t.me/{config.bot_username}?start=ref{user_id}"
     status_msg_id = gen.get("callback_message_id")
 
     try:
@@ -292,9 +294,9 @@ async def _deliver_result_to_user(
                         await bot.send_voice(
                             chat_id=chat_id,
                             voice=voice_file,
-                            caption=PREVIEW_CAPTION.format(title=title),
+                            caption=PREVIEW_CAPTION.format(title=title, bot_link=bot_link),
                             parse_mode="HTML",
-                            reply_markup=preview_track_kb(gen_id, i),
+                            reply_markup=preview_track_kb(gen_id, i, user_id=user_id),
                         )
                     except Exception as e:
                         logger.warning(f"Callback: preview creation failed for track {i}, sending full audio as fallback: {e}")
@@ -308,9 +310,9 @@ async def _deliver_result_to_user(
                             audio=audio_file,
                             title=f"🎧 {title}",
                             performer="AI Melody",
-                            caption=PREVIEW_CAPTION.format(title=title),
+                            caption=PREVIEW_CAPTION.format(title=title, bot_link=bot_link),
                             parse_mode="HTML",
-                            reply_markup=preview_track_kb(gen_id, i),
+                            reply_markup=preview_track_kb(gen_id, i, user_id=user_id),
                         )
                 else:
                     # ─── PAID: Send full MP3 ───
@@ -318,12 +320,18 @@ async def _deliver_result_to_user(
                         audio_data,
                         filename=f"{title}.mp3",
                     )
+                    paid_caption = (
+                        f"🎵 <a href=\"{bot_link}\">Создай свою песню с помощью ИИ</a> — "
+                        f"получи +1🎵 за каждого друга!"
+                    )
                     await bot.send_audio(
                         chat_id=chat_id,
                         audio=audio_file,
                         title=title,
                         performer="AI Melody",
-                        reply_markup=track_kb(gen_id, i),
+                        caption=paid_caption,
+                        parse_mode="HTML",
+                        reply_markup=track_kb(gen_id, i, user_id=user_id),
                     )
             except Exception as e:
                 logger.error(f"Callback: failed to send track {i}: {e}")

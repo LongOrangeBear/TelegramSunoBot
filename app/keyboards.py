@@ -1,5 +1,7 @@
 """Keyboard builders for the bot — Reply keyboard + Inline keyboards."""
 
+from urllib.parse import quote
+
 from aiogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     ReplyKeyboardMarkup, KeyboardButton,
@@ -7,6 +9,17 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import config
+
+
+def _share_url(user_id: int) -> str:
+    """Build a t.me/share/url link with referral deep link."""
+    bot_link = f"https://t.me/{config.bot_username}?start=ref{user_id}"
+    text = (
+        "🎵 Послушай какую песню мне создал ИИ!\n"
+        "Попробуй сам → " + bot_link + "\n\n"
+        "🎁 +1 песня за каждого друга, который запустит бота!"
+    )
+    return f"https://t.me/share/url?url={quote(bot_link)}&text={quote(text)}"
 
 
 # ─── Button text constants (used for matching in handlers) ───
@@ -294,8 +307,8 @@ def stars_kb() -> InlineKeyboardMarkup:
 
 # ─── Result keyboard ───
 
-def preview_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
-    """Per-track keyboard for preview (free generation): buy + rate."""
+def preview_track_kb(gen_id: int, idx: int, user_id: int = 0) -> InlineKeyboardMarkup:
+    """Per-track keyboard for preview (free generation): buy + share."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -303,19 +316,18 @@ def preview_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
             callback_data=f"buy_track:{gen_id}:{idx}",
         ),
     )
-    # Rating row
-    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    rating_row = []
-    for i, label in enumerate(star_labels, 1):
-        rating_row.append(
-            InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
+    if user_id:
+        builder.row(
+            InlineKeyboardButton(
+                text="📤 Поделиться (+1🎵 за друга)",
+                url=_share_url(user_id),
+            ),
         )
-    builder.row(*rating_row)
     return builder.as_markup()
 
 
-def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
-    """Per-track inline keyboard: download + rate (for paid/unlocked tracks)."""
+def track_kb(gen_id: int, idx: int, user_id: int = 0) -> InlineKeyboardMarkup:
+    """Per-track inline keyboard: download + share (for paid/unlocked tracks)."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -323,19 +335,18 @@ def track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
             callback_data=f"download:{gen_id}:{idx}",
         ),
     )
-    # Rating row
-    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    rating_row = []
-    for i, label in enumerate(star_labels, 1):
-        rating_row.append(
-            InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
+    if user_id:
+        builder.row(
+            InlineKeyboardButton(
+                text="📤 Поделиться (+1🎵 за друга)",
+                url=_share_url(user_id),
+            ),
         )
-    builder.row(*rating_row)
     return builder.as_markup()
 
 
-def history_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
-    """Per-track keyboard for history: download only."""
+def history_track_kb(gen_id: int, idx: int, user_id: int = 0) -> InlineKeyboardMarkup:
+    """Per-track keyboard for history: download + share."""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
@@ -343,12 +354,35 @@ def history_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
             callback_data=f"download:{gen_id}:{idx}",
         ),
     )
+    if user_id:
+        builder.row(
+            InlineKeyboardButton(
+                text="📤 Поделиться (+1🎵 за друга)",
+                url=_share_url(user_id),
+            ),
+        )
     return builder.as_markup()
 
 
 def preview_after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
-    """Keyboard shown after preview tracks: create another (no regenerate for free)."""
+    """Keyboard shown after preview tracks: rate + feedback + create another."""
     builder = InlineKeyboardBuilder()
+    # Rating label
+    builder.row(
+        InlineKeyboardButton(text="⭐ Оцените результат:", callback_data="noop"),
+    )
+    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    rating_row = [
+        InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
+        for i, label in enumerate(star_labels, 1)
+    ]
+    builder.row(*rating_row)
+    builder.row(
+        InlineKeyboardButton(
+            text="✍️ Оставить комментарий / предложение",
+            callback_data=f"feedback:{gen_id}",
+        ),
+    )
     builder.row(
         InlineKeyboardButton(text="🎵 Создать новую песню", callback_data="create"),
     )
@@ -356,28 +390,28 @@ def preview_after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
 
 
 def after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
-    """Keyboard shown after all tracks: regenerate + create another."""
+    """Keyboard shown after all tracks: rate + feedback + regenerate + create another."""
     builder = InlineKeyboardBuilder()
+    # Rating label
+    builder.row(
+        InlineKeyboardButton(text="⭐ Оцените результат:", callback_data="noop"),
+    )
+    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    rating_row = [
+        InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
+        for i, label in enumerate(star_labels, 1)
+    ]
+    builder.row(*rating_row)
+    builder.row(
+        InlineKeyboardButton(
+            text="✍️ Оставить комментарий / предложение",
+            callback_data=f"feedback:{gen_id}",
+        ),
+    )
     builder.row(
         InlineKeyboardButton(text="🔄 Ещё варианты (−1🎵)", callback_data=f"regenerate:{gen_id}"),
     )
     builder.row(
         InlineKeyboardButton(text="🎵 Создать новую песню", callback_data="create"),
     )
-    return builder.as_markup()
-
-
-def rating_kb(gen_id: int) -> InlineKeyboardMarkup:
-    """Standalone rating keyboard with 5 stars."""
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="Оцените песню:", callback_data="noop"),
-    )
-    star_labels = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    rating_row = []
-    for i, label in enumerate(star_labels, 1):
-        rating_row.append(
-            InlineKeyboardButton(text=label, callback_data=f"rate:{gen_id}:{i}")
-        )
-    builder.row(*rating_row)
     return builder.as_markup()

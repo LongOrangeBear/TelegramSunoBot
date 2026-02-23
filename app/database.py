@@ -113,6 +113,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='suno_audio_ids') THEN
         ALTER TABLE generations ADD COLUMN suno_audio_ids TEXT[];
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='user_comment') THEN
+        ALTER TABLE generations ADD COLUMN user_comment TEXT;
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS balance_transactions (
@@ -310,6 +313,15 @@ async def update_generation_rating(gen_id: int, rating: int):
         await conn.execute(
             "UPDATE generations SET rating = $2 WHERE id = $1",
             gen_id, rating,
+        )
+
+
+async def save_generation_comment(gen_id: int, comment: str):
+    """Save user comment/feedback for a generation."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE generations SET user_comment = $2 WHERE id = $1",
+            gen_id, comment,
         )
 
 
@@ -601,3 +613,12 @@ async def admin_get_balance_transactions(
             user_id, limit, offset,
         )
         return [dict(r) for r in rows]
+
+
+async def get_all_user_ids() -> list[int]:
+    """Get all user Telegram IDs (for broadcast)."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT telegram_id FROM users WHERE is_blocked = FALSE ORDER BY created_at"
+        )
+        return [r["telegram_id"] for r in rows]

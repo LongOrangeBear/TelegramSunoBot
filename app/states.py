@@ -24,3 +24,6 @@ class GenerationStates(StatesGroup):
     stories_mood = State()          # Pick: mood (дерзко, мило, ...)
     stories_context = State()       # Enter context (what are you doing today)
     stories_name = State()          # Enter name/nickname (optional)
+
+    # Feedback
+    awaiting_feedback = State()     # Waiting for user comment on generation

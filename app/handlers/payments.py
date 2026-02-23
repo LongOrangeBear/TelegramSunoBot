@@ -104,7 +104,7 @@ async def on_successful_payment(message: Message):
                         audio_file, caption=UNLOCK_SUCCESS,
                         title=title, performer="AI Melody",
                         parse_mode="HTML",
-                        reply_markup=track_kb(gen_id, idx),
+                        reply_markup=track_kb(gen_id, idx, user_id=message.from_user.id),
                     )
 
                     # Trigger video generation if enabled
