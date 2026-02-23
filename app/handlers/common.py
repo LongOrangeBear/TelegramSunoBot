@@ -69,6 +69,10 @@ async def cmd_start(message: Message, state: FSMContext):
             referrer = await db.get_user(referred_by)
             if referrer:
                 new_balance = await db.update_user_credits(referred_by, 1)
+                await db.log_balance_transaction(
+                    referred_by, 1, 'referral',
+                    f'Реферал от {message.from_user.id}',
+                )
                 bot = message.bot
                 await bot.send_message(
                     referred_by,
@@ -81,6 +85,11 @@ async def cmd_start(message: Message, state: FSMContext):
 
     if is_new:
         text = WELCOME.format(free=config.free_credits_on_signup)
+        if config.free_credits_on_signup > 0:
+            await db.log_balance_transaction(
+                message.from_user.id, config.free_credits_on_signup,
+                'signup_bonus', 'Бонус за регистрацию',
+            )
     else:
         total = user["credits"] + user["free_generations_left"]
         text = WELCOME_BACK.format(credits=total)

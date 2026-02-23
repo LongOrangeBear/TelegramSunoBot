@@ -46,6 +46,20 @@ def fmt_date(dt) -> str:
     return str(dt)
 
 
+MODE_LABELS = {
+    "description": "💡 Идея",
+    "lyrics": "✍️ Стихи",
+    "greeting": "🎉 Поздравление",
+    "stories": "📱 Сторис",
+}
+
+
+def _mode_label(g: dict) -> str:
+    """Human-readable mode label from user_mode or mode."""
+    mode = g.get("user_mode") or g.get("mode") or "description"
+    return MODE_LABELS.get(mode, mode)
+
+
 # ─── HTML Templates ───
 
 def base_html(title: str, content: str, token: str) -> str:
@@ -437,7 +451,11 @@ async def dashboard(request: web.Request):
         </div>
         <div class="stat-card">
             <div class="value">⭐{stats['total_stars']}</div>
-            <div class="label">Stars получено (из БД)</div>
+            <div class="label">Stars получено</div>
+        </div>
+        <div class="stat-card" style="border-color: rgba(34, 197, 94, 0.4); background: linear-gradient(145deg, #0a2214 0%, #16162e 100%);">
+            <div class="value" style="color: #4ade80;">{stats['total_rub']}₽</div>
+            <div class="label">Рублей получено (карта)</div>
         </div>
         <div class="stat-card">
             <div class="value">{stats['total_credits_sold']}🎵</div>
@@ -562,6 +580,7 @@ async def users_list(request: web.Request):
             <td>{total_credits}🎵 {blocked}</td>
             <td>{u['gen_count']}</td>
             <td>⭐{u['total_stars']}</td>
+            <td>{u.get('total_rub', 0)}₽</td>
             <td>{ref_badge}</td>
             <td>{fmt_date(u['created_at'])}</td>
         </tr>"""
@@ -583,12 +602,13 @@ async def users_list(request: web.Request):
                 <th>Баланс</th>
                 <th>Генераций</th>
                 <th>Stars</th>
+                <th>Рубли</th>
                 <th>Рефералы</th>
                 <th>Регистрация</th>
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="8" class="empty">Нет пользователей</td></tr>'}
+            {rows if rows else '<tr><td colspan="9" class="empty">Нет пользователей</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>
@@ -628,22 +648,27 @@ async def user_detail(request: web.Request):
     # Get today's generation count
     today_count = await db.count_user_generations_today(telegram_id)
 
+    # Get balance transactions
+    balance_txns = await db.admin_get_balance_transactions(telegram_id)
+
     gen_rows = ""
     for g in data["generations"]:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
         prompt_text = g.get("prompt") or ""
         prompt_short = (prompt_text[:80] + "...") if len(prompt_text) > 80 else prompt_text
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
+        error_text = g.get("error_message") or ""
+        error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
-            <td>{g.get('mode', '—')}</td>
+            <td>{_mode_label(g)}</td>
             <td class="prompt-cell" onclick="togglePrompt(this)">
                 <div class="prompt-short">{prompt_short}</div>
                 <div class="prompt-full">{prompt_text}</div>
             </td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
-            <td><span class="badge {status_class}">{g['status']}</span></td>
+            <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
             <td>{rating_display}</td>
             <td>{g.get('credits_spent', 0)}🎵</td>
             <td>{fmt_date(g['created_at'])}</td>
@@ -651,12 +676,20 @@ async def user_detail(request: web.Request):
 
     pay_rows = ""
     for p in data["payments"]:
+        ptype = p.get('payment_type', 'stars')
+        if ptype == 'tbank':
+            type_badge = '<span class="badge badge-ok">💳 Карта</span>'
+            amount_display = f"{p.get('amount_rub', 0)}₽"
+        else:
+            type_badge = '<span class="badge badge-info">⭐ Stars</span>'
+            amount_display = f"⭐{p['stars_amount']}"
         pay_rows += f"""<tr>
             <td>{p['id']}</td>
-            <td>⭐{p['stars_amount']}</td>
+            <td>{type_badge}</td>
+            <td>{amount_display}</td>
             <td>{p['credits_purchased']}🎵</td>
             <td><span class="badge badge-ok">{p['status']}</span></td>
-            <td><code>{p.get('tg_payment_id', '—')}</code></td>
+            <td><code>{p.get('tg_payment_id') or p.get('tbank_payment_id') or '—'}</code></td>
             <td>{fmt_date(p['created_at'])}</td>
         </tr>"""
 
@@ -728,7 +761,8 @@ async def user_detail(request: web.Request):
         <thead>
             <tr>
                 <th>#</th>
-                <th>Stars</th>
+                <th>Тип</th>
+                <th>Сумма</th>
                 <th>Кредиты</th>
                 <th>Статус</th>
                 <th>Payment ID</th>
@@ -736,7 +770,49 @@ async def user_detail(request: web.Request):
             </tr>
         </thead>
         <tbody>
-            {pay_rows if pay_rows else '<tr><td colspan="6" class="empty">Нет платежей</td></tr>'}
+            {pay_rows if pay_rows else '<tr><td colspan="7" class="empty">Нет платежей</td></tr>'}
+        </tbody>
+    </table>
+    """
+
+    # Build balance transactions section
+    source_badges = {
+        'stars': '<span class="badge badge-info">⭐ Stars</span>',
+        'tbank': '<span class="badge badge-ok">💳 Карта</span>',
+        'admin': '<span class="badge" style="background:rgba(139,92,246,0.15);color:#a78bfa;">👑 Админ</span>',
+        'referral': '<span class="badge" style="background:rgba(236,72,153,0.15);color:#f472b6;">👥 Реферал</span>',
+        'signup_bonus': '<span class="badge" style="background:rgba(34,197,94,0.15);color:#4ade80;">🎁 Бонус</span>',
+        'generation': '<span class="badge" style="background:rgba(234,179,8,0.15);color:#facc15;">🎵 Генерация</span>',
+        'download': '<span class="badge" style="background:rgba(59,130,246,0.15);color:#60a5fa;">⬇️ Скачивание</span>',
+        'refund': '<span class="badge" style="background:rgba(239,68,68,0.15);color:#f87171;">↩️ Возврат</span>',
+    }
+    txn_rows = ""
+    for t in balance_txns:
+        badge = source_badges.get(t['source'], f'<span class="badge badge-info">{t["source"]}</span>')
+        amount_str = f'+{t["amount"]}' if t['amount'] > 0 else str(t['amount'])
+        amount_color = '#4ade80' if t['amount'] > 0 else '#f87171'
+        txn_rows += f"""<tr>
+            <td>{t['id']}</td>
+            <td>{badge}</td>
+            <td style="color: {amount_color}; font-weight: 600;">{amount_str}🎵</td>
+            <td>{t.get('description') or '—'}</td>
+            <td>{fmt_date(t['created_at'])}</td>
+        </tr>"""
+
+    content += f"""
+    <div class="section-title">💳 История баланса ({len(balance_txns)})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Источник</th>
+                <th>Сумма</th>
+                <th>Описание</th>
+                <th>Дата</th>
+            </tr>
+        </thead>
+        <tbody>
+            {txn_rows if txn_rows else '<tr><td colspan="5" class="empty">Нет записей</td></tr>'}
         </tbody>
     </table>
     """
@@ -762,17 +838,19 @@ async def generations_list(request: web.Request):
         prompt_short = (prompt_text[:60] + "...") if len(prompt_text) > 60 else prompt_text
         user_label = f"@{g['username']}" if g.get("username") else str(g["user_id"])
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
+        error_text = g.get("error_message") or ""
+        error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
         rows += f"""<tr>
             <td>{g['id']}</td>
             <td><a class="link" href="/admin/user/{g['user_id']}?{tp}">{user_label}</a></td>
-            <td>{g.get('mode', '—')}</td>
+            <td>{_mode_label(g)}</td>
             <td class="prompt-cell" onclick="togglePrompt(this)">
                 <div class="prompt-short">{prompt_short}</div>
                 <div class="prompt-full">{prompt_text}</div>
             </td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
-            <td><span class="badge {status_class}">{g['status']}</span></td>
+            <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
             <td>{rating_display}</td>
             <td>{g.get('credits_spent', 0)}🎵</td>
             <td>{fmt_date(g['created_at'])}</td>
@@ -825,13 +903,22 @@ async def payments_list(request: web.Request):
     rows = ""
     for p in payments:
         user_label = f"@{p['username']}" if p.get("username") else str(p["user_id"])
+        ptype = p.get('payment_type', 'stars')
+        if ptype == 'tbank':
+            type_badge = '<span class="badge badge-ok">💳 Карта</span>'
+            amount_display = f"{p.get('amount_rub', 0)}₽"
+        else:
+            type_badge = '<span class="badge badge-info">⭐ Stars</span>'
+            amount_display = f"⭐{p['stars_amount']}"
+        status_class = 'badge-ok' if p['status'] == 'completed' else 'badge-warn'
         rows += f"""<tr>
             <td>{p['id']}</td>
             <td><a class="link" href="/admin/user/{p['user_id']}?{tp}">{user_label}</a></td>
-            <td>⭐{p['stars_amount']}</td>
+            <td>{type_badge}</td>
+            <td>{amount_display}</td>
             <td>{p['credits_purchased']}🎵</td>
-            <td><span class="badge badge-ok">{p['status']}</span></td>
-            <td><code>{p.get('tg_payment_id', '—')}</code></td>
+            <td><span class="badge {status_class}">{p['status']}</span></td>
+            <td><code>{p.get('tg_payment_id') or p.get('tbank_payment_id') or '—'}</code></td>
             <td>{fmt_date(p['created_at'])}</td>
         </tr>"""
 
@@ -848,7 +935,8 @@ async def payments_list(request: web.Request):
             <tr>
                 <th>#</th>
                 <th>Пользователь</th>
-                <th>Stars</th>
+                <th>Тип</th>
+                <th>Сумма</th>
                 <th>Кредиты</th>
                 <th>Статус</th>
                 <th>Payment ID</th>
@@ -856,7 +944,7 @@ async def payments_list(request: web.Request):
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="7" class="empty">Нет платежей</td></tr>'}
+            {rows if rows else '<tr><td colspan="8" class="empty">Нет платежей</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>
@@ -912,6 +1000,9 @@ async def credit_user(request: web.Request):
         amount = int(data.get("amount", 0))
         if 1 <= amount <= 1000:
             await db.update_user_credits(telegram_id, amount)
+            await db.log_balance_transaction(
+                telegram_id, amount, 'admin', 'Начисление администратором',
+            )
             logger.info(f"Admin credited {amount} to user {telegram_id}")
     except (ValueError, TypeError):
         amount = 0

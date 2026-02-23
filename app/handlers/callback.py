@@ -120,6 +120,9 @@ async def handle_suno_callback(request: web.Request) -> web.Response:
                 await db.use_free_generation(user_id)
             else:
                 await db.update_user_credits(user_id, -1)
+            await db.log_balance_transaction(
+                user_id, -1, 'generation', f'Генерация #{gen_id}',
+            )
             await db.update_last_generation(user_id)
 
         await db.update_generation_status(

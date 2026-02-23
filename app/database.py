@@ -97,7 +97,25 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='payments' AND column_name='tbank_payment_id') THEN
         ALTER TABLE payments ADD COLUMN tbank_payment_id VARCHAR(64);
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='user_mode') THEN
+        ALTER TABLE generations ADD COLUMN user_mode VARCHAR(20);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='raw_input') THEN
+        ALTER TABLE generations ADD COLUMN raw_input TEXT;
+    END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS balance_transactions (
+    id          SERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES users(telegram_id),
+    amount      INTEGER NOT NULL,
+    source      VARCHAR(30) NOT NULL,
+    description TEXT,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_balance_transactions_user_id ON balance_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_balance_transactions_created_at ON balance_transactions(created_at);
 """
 
 
@@ -188,14 +206,17 @@ async def count_referrals(telegram_id: int) -> int:
 # ─── Generation operations ───
 
 async def create_generation(user_id: int, prompt: str, style: str,
-                            voice_gender: str | None, mode: str) -> int:
+                            voice_gender: str | None, mode: str,
+                            user_mode: str | None = None,
+                            raw_input: str | None = None) -> int:
     """Create a generation record and return its ID."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """INSERT INTO generations (user_id, prompt, style, voice_gender, mode, status)
-               VALUES ($1, $2, $3, $4, $5, 'pending')
+            """INSERT INTO generations (user_id, prompt, style, voice_gender, mode, status, user_mode, raw_input)
+               VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
                RETURNING id""",
             user_id, prompt, style, voice_gender, mode,
+            user_mode or mode, raw_input,
         )
         return row["id"]
 
@@ -338,6 +359,12 @@ async def create_payment(user_id: int, tg_payment_id: str, stars: int, credits: 
             "UPDATE users SET credits = credits + $2 WHERE telegram_id = $1",
             user_id, credits,
         )
+        # Log balance transaction
+        await conn.execute(
+            """INSERT INTO balance_transactions (user_id, amount, source, description)
+               VALUES ($1, $2, 'stars', $3)""",
+            user_id, credits, f"Покупка за ⭐{stars}",
+        )
         return row["id"]
 
 
@@ -381,6 +408,14 @@ async def complete_tbank_payment(order_id: str, tbank_payment_id: str) -> dict |
             payment["user_id"], payment["credits_purchased"],
         )
 
+        # Log balance transaction
+        await conn.execute(
+            """INSERT INTO balance_transactions (user_id, amount, source, description)
+               VALUES ($1, $2, 'tbank', $3)""",
+            payment["user_id"], payment["credits_purchased"],
+            f"Оплата картой {payment['amount_rub']}₽",
+        )
+
         return payment
 
 
@@ -396,9 +431,14 @@ async def admin_get_stats() -> dict:
             "SELECT COUNT(*) FROM generations WHERE created_at >= CURRENT_DATE"
         )
         payments_count = await conn.fetchval("SELECT COUNT(*) FROM payments")
-        total_stars = await conn.fetchval("SELECT COALESCE(SUM(stars_amount), 0) FROM payments")
+        total_stars = await conn.fetchval(
+            "SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE payment_type = 'stars' AND status = 'completed'"
+        )
+        total_rub = await conn.fetchval(
+            "SELECT COALESCE(SUM(amount_rub), 0) FROM payments WHERE payment_type = 'tbank' AND status = 'completed'"
+        )
         total_credits_sold = await conn.fetchval(
-            "SELECT COALESCE(SUM(credits_purchased), 0) FROM payments"
+            "SELECT COALESCE(SUM(credits_purchased), 0) FROM payments WHERE status = 'completed'"
         )
         avg_rating = await conn.fetchval(
             "SELECT ROUND(AVG(rating)::numeric, 1) FROM generations WHERE rating IS NOT NULL"
@@ -410,6 +450,7 @@ async def admin_get_stats() -> dict:
             "gens_today": gens_today,
             "payments_count": payments_count,
             "total_stars": total_stars,
+            "total_rub": total_rub,
             "total_credits_sold": total_credits_sold,
             "avg_rating": avg_rating or "—",
         }
@@ -421,7 +462,8 @@ async def admin_get_users(limit: int = 100, offset: int = 0) -> list[dict]:
             """SELECT u.*,
                       (SELECT COUNT(*) FROM generations g WHERE g.user_id = u.telegram_id) as gen_count,
                       (SELECT COUNT(*) FROM payments p WHERE p.user_id = u.telegram_id) as pay_count,
-                      (SELECT COALESCE(SUM(p.stars_amount), 0) FROM payments p WHERE p.user_id = u.telegram_id) as total_stars,
+                      (SELECT COALESCE(SUM(p.stars_amount), 0) FROM payments p WHERE p.user_id = u.telegram_id AND p.payment_type = 'stars' AND p.status = 'completed') as total_stars,
+                      (SELECT COALESCE(SUM(p.amount_rub), 0) FROM payments p WHERE p.user_id = u.telegram_id AND p.payment_type = 'tbank' AND p.status = 'completed') as total_rub,
                       (SELECT COUNT(*) FROM users r WHERE r.referred_by = u.telegram_id) as referral_count
                FROM users u
                ORDER BY u.created_at DESC
@@ -477,5 +519,37 @@ async def admin_get_payments(limit: int = 100, offset: int = 0) -> list[dict]:
                ORDER BY p.created_at DESC
                LIMIT $1 OFFSET $2""",
             limit, offset,
+        )
+        return [dict(r) for r in rows]
+
+
+# ─── Balance transaction logging ───
+
+async def log_balance_transaction(
+    user_id: int, amount: int, source: str, description: str = "",
+):
+    """Log a balance change. source: stars, tbank, admin, referral, signup_bonus."""
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO balance_transactions (user_id, amount, source, description)
+                   VALUES ($1, $2, $3, $4)""",
+                user_id, amount, source, description,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to log balance transaction: {e}")
+
+
+async def admin_get_balance_transactions(
+    user_id: int, limit: int = 50, offset: int = 0,
+) -> list[dict]:
+    """Get balance transaction history for a user."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT * FROM balance_transactions
+               WHERE user_id = $1
+               ORDER BY created_at DESC
+               LIMIT $2 OFFSET $3""",
+            user_id, limit, offset,
         )
         return [dict(r) for r in rows]

@@ -1,5 +1,6 @@
 """Music generation flow handlers."""
 
+import json
 import logging
 from io import BytesIO
 
@@ -382,7 +383,16 @@ async def on_greeting_details(message: Message, state: FSMContext):
     # Limit to 400 chars for description mode
     assembled = assembled[:400]
 
-    await state.update_data(prompt=assembled, mode="description")
+    # Preserve original mode and raw wizard inputs
+    raw_input = json.dumps({
+        "recipient": recipient, "name": name,
+        "occasion": occasion, "mood": mood, "details": details,
+    }, ensure_ascii=False)
+
+    await state.update_data(
+        prompt=assembled, mode="description",
+        user_mode="greeting", raw_input=raw_input,
+    )
     await do_generate(message, state)
 
 
@@ -507,7 +517,15 @@ async def _assemble_stories_prompt(message: Message, state: FSMContext, user_id:
     assembled = ". ".join(prompt_parts)
     assembled = assembled[:400]
 
-    await state.update_data(prompt=assembled, mode="description")
+    # Preserve original mode and raw wizard inputs
+    raw_input = json.dumps({
+        "vibe": vibe, "mood": mood, "context": context, "name": name,
+    }, ensure_ascii=False)
+
+    await state.update_data(
+        prompt=assembled, mode="description",
+        user_mode="stories", raw_input=raw_input,
+    )
     await do_generate(message, state, user_id=user_id)
 
 
@@ -556,6 +574,8 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
         style=style,
         voice_gender=voice_gender,
         mode=mode,
+        user_mode=data.get("user_mode"),
+        raw_input=data.get("raw_input"),
     )
 
     try:
@@ -618,6 +638,9 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
             await db.use_free_generation(user_id)
         else:
             await db.update_user_credits(user_id, -1)
+        await db.log_balance_transaction(
+            user_id, -1, 'generation', f'Генерация #{gen_id}',
+        )
 
         await db.update_last_generation(user_id)
         await db.update_generation_status(
@@ -831,6 +854,9 @@ async def cb_download(callback: CallbackQuery):
         await db.use_free_generation(callback.from_user.id)
     else:
         await db.update_user_credits(callback.from_user.id, -1)
+    await db.log_balance_transaction(
+        callback.from_user.id, -1, 'download', f'Скачивание #{gen_id}',
+    )
 
     try:
         async with httpx.AsyncClient() as http:
@@ -853,6 +879,9 @@ async def cb_download(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Download error: {e}")
         await db.update_user_credits(callback.from_user.id, 1)
+        await db.log_balance_transaction(
+            callback.from_user.id, 1, 'refund', f'Возврат за ошибку скачивания #{gen_id}',
+        )
         await callback.answer("Ошибка скачивания. Кредит возвращён.", show_alert=True)
 
 
@@ -901,6 +930,8 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
         style=data.get("style", ""),
         voice_gender=data.get("voice_gender"),
         mode=data.get("mode", "description"),
+        user_mode=data.get("user_mode"),
+        raw_input=data.get("raw_input"),
     )
 
     try:
@@ -967,6 +998,9 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
             await db.use_free_generation(user_id)
         else:
             await db.update_user_credits(user_id, -1)
+        await db.log_balance_transaction(
+            user_id, -1, 'generation', f'Генерация #{gen_id_new} (повтор)',
+        )
 
         await db.update_last_generation(user_id)
         await db.update_generation_status(gen_id_new, "complete", audio_urls=audio_urls, credits_spent=1)
