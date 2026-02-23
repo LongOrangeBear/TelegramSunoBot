@@ -15,7 +15,7 @@ from app.keyboards import (
     mode_kb, gender_kb, style_kb, track_kb, history_track_kb, after_generation_kb,
     preview_track_kb, preview_after_generation_kb,
     main_reply_kb, greeting_recipient_kb, greeting_occasion_kb, greeting_mood_kb,
-    GREETING_OCCASION_LABELS, GREETING_MOOD_LABELS,
+    STYLES, GREETING_RECIPIENTS, GREETING_OCCASION_LABELS, GREETING_MOOD_LABELS,
     stories_vibe_kb, stories_mood_kb, stories_name_kb,
     STORIES_VIBE_LABELS, STORIES_MOOD_LABELS,
 )
@@ -150,10 +150,12 @@ async def cb_mode(callback: CallbackQuery, state: FSMContext):
     else:
         await state.update_data(mode="description")
 
-    # All modes go through gender → style first
+    # Show choice in chat, then next step
+    choice_text = mode_feedback.get(mode, "✅ Режим выбран")
+    await callback.message.edit_text(f"✅ {choice_text}")
     await state.set_state(GenerationStates.choosing_gender)
-    await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
-    await callback.answer(mode_feedback.get(mode, "✅ Режим выбран"))
+    await callback.message.answer(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
+    await callback.answer()
 
 
 @router.callback_query(F.data == "back_mode")
@@ -170,8 +172,10 @@ async def cb_back_mode(callback: CallbackQuery, state: FSMContext):
 async def cb_gender(callback: CallbackQuery, state: FSMContext):
     gender = callback.data.split(":")[1]
     await state.update_data(voice_gender=gender)
+    gender_label = "🚹 Мужской" if gender == "male" else "🚺 Женский"
+    await callback.message.edit_text(f"✅ Голос: {gender_label}")
     await state.set_state(GenerationStates.choosing_style)
-    await callback.message.edit_text(CHOOSE_STYLE, parse_mode="HTML", reply_markup=style_kb())
+    await callback.message.answer(CHOOSE_STYLE, parse_mode="HTML", reply_markup=style_kb())
     await callback.answer()
 
 
@@ -197,10 +201,18 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
     await state.update_data(style=style)
     data = await state.get_data()
 
+    # Find human-readable style label
+    style_label = style
+    for label, code in STYLES:
+        if code == style:
+            style_label = label
+            break
+    await callback.message.edit_text(f"✅ Стиль: {style_label}")
+
     # Greeting mode: branch into greeting wizard
     if data.get("mode") == "greeting":
         await state.set_state(GenerationStates.greeting_recipient)
-        await callback.message.edit_text(
+        await callback.message.answer(
             GREETING_CHOOSE_RECIPIENT, parse_mode="HTML",
             reply_markup=greeting_recipient_kb(),
         )
@@ -210,7 +222,7 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
     # Stories mode: branch into stories wizard
     if data.get("mode") == "stories":
         await state.set_state(GenerationStates.stories_vibe)
-        await callback.message.edit_text(
+        await callback.message.answer(
             STORIES_CHOOSE_VIBE, parse_mode="HTML",
             reply_markup=stories_vibe_kb(),
         )
@@ -220,7 +232,7 @@ async def cb_style(callback: CallbackQuery, state: FSMContext):
     await state.set_state(GenerationStates.entering_prompt)
     # Show mode-appropriate prompt
     text = ENTER_LYRICS if data.get("mode") == "lyrics" else ENTER_PROMPT
-    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()
 
 
@@ -287,9 +299,16 @@ async def cb_greeting_recipient(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(GREETING_ENTER_CUSTOM_RECIPIENT, parse_mode="HTML")
         await callback.answer()
         return
+    # Find human-readable recipient label
+    rcpt_label = value
+    for label, code in GREETING_RECIPIENTS:
+        if code == value:
+            rcpt_label = label
+            break
+    await callback.message.edit_text(f"✅ Кому: {rcpt_label}")
     await state.update_data(gr_recipient=value)
     await state.set_state(GenerationStates.greeting_name)
-    await callback.message.edit_text(GREETING_ENTER_NAME, parse_mode="HTML")
+    await callback.message.answer(GREETING_ENTER_NAME, parse_mode="HTML")
     await callback.answer()
 
 
@@ -333,9 +352,10 @@ async def cb_greeting_occasion(callback: CallbackQuery, state: FSMContext):
         return
     # Resolve short ID to display label
     label = GREETING_OCCASION_LABELS.get(value, value)
+    await callback.message.edit_text(f"✅ Повод: {label}")
     await state.update_data(gr_occasion=label)
     await state.set_state(GenerationStates.greeting_mood)
-    await callback.message.edit_text(
+    await callback.message.answer(
         GREETING_CHOOSE_MOOD, parse_mode="HTML",
         reply_markup=greeting_mood_kb(),
     )
@@ -371,9 +391,10 @@ async def cb_greeting_mood(callback: CallbackQuery, state: FSMContext):
     value = callback.data.split(":", 1)[1]
     # Resolve short ID to display label
     label = GREETING_MOOD_LABELS.get(value, value)
+    await callback.message.edit_text(f"✅ Настроение: {label}")
     await state.update_data(gr_mood=label)
     await state.set_state(GenerationStates.greeting_details)
-    await callback.message.edit_text(GREETING_ENTER_DETAILS, parse_mode="HTML")
+    await callback.message.answer(GREETING_ENTER_DETAILS, parse_mode="HTML")
     await callback.answer()
 
 
@@ -445,9 +466,10 @@ async def cb_stories_vibe(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     label = STORIES_VIBE_LABELS.get(value, value)
+    await callback.message.edit_text(f"✅ Вайб: {label}")
     await state.update_data(st_vibe=label)
     await state.set_state(GenerationStates.stories_mood)
-    await callback.message.edit_text(
+    await callback.message.answer(
         STORIES_CHOOSE_MOOD, parse_mode="HTML",
         reply_markup=stories_mood_kb(),
     )
@@ -482,9 +504,10 @@ async def cb_back_st_vibe(callback: CallbackQuery, state: FSMContext):
 async def cb_stories_mood(callback: CallbackQuery, state: FSMContext):
     value = callback.data.split(":", 1)[1]
     label = STORIES_MOOD_LABELS.get(value, value)
+    await callback.message.edit_text(f"✅ Атмосфера: {label}")
     await state.update_data(st_mood=label)
     await state.set_state(GenerationStates.stories_context)
-    await callback.message.edit_text(STORIES_ENTER_CONTEXT, parse_mode="HTML")
+    await callback.message.answer(STORIES_ENTER_CONTEXT, parse_mode="HTML")
     await callback.answer()
 
 
@@ -513,7 +536,8 @@ async def cb_back_st_context(callback: CallbackQuery, state: FSMContext):
 async def cb_stories_name_skip(callback: CallbackQuery, state: FSMContext):
     """Skip name → assemble prompt and generate."""
     await state.update_data(st_name="")
-    await callback.answer("⏩ Пропущено")
+    await callback.message.edit_text("✅ Имя: пропущено")
+    await callback.answer()
     # callback.message is the bot's message, so we pass user_id explicitly
     await _assemble_stories_prompt(callback.message, state, user_id=callback.from_user.id)
 
