@@ -440,7 +440,9 @@ async def dashboard(request: web.Request):
     success = request.query.get("success", "")
     success_html = ""
     if success == "credits_set":
-        success_html = '<span class="success-msg">✅ Стартовые кредиты обновлены</span>'
+        success_html = '<span class="success-msg">✅ Стартовые бесплатные обновлены</span>'
+    elif success == "signup_credits_set":
+        success_html = '<span class="success-msg">✅ Стартовые платные обновлены</span>'
     elif success == "model_set":
         success_html = f'<span class="success-msg">✅ Модель изменена на {config.suno_model}</span>'
     elif success == "daily_limit_set":
@@ -525,14 +527,24 @@ async def dashboard(request: web.Request):
                 <td>Версия модели Suno AI для генерации музыки</td>
             </tr>
             <tr>
-                <td>🎁 Стартовые кредиты</td>
+                <td>🎁 Стартовые бесплатные (превью)</td>
                 <td>
                     <form method="POST" action="/admin/set_free_credits?{tp}" class="admin-form">
                         <input type="number" name="free_credits" value="{config.free_credits_on_signup}" min="0" max="100" class="admin-input">
                         <button type="submit" class="admin-btn">Сохранить</button>
                     </form>
                 </td>
-                <td>Кол-во бесплатных кредитов при первом /start</td>
+                <td>Кол-во бесплатных кредитов (превью) при первом /start</td>
+            </tr>
+            <tr>
+                <td>🎵 Стартовые платные</td>
+                <td>
+                    <form method="POST" action="/admin/set_signup_credits?{tp}" class="admin-form">
+                        <input type="number" name="credits" value="{config.credits_on_signup}" min="0" max="100" class="admin-input">
+                        <button type="submit" class="admin-btn">Сохранить</button>
+                    </form>
+                </td>
+                <td>Кол-во платных кредитов (полные треки) при первом /start. По умолчанию 0</td>
             </tr>
             <tr>
                 <td>📊 Лимит/день на юзера</td>
@@ -1045,6 +1057,22 @@ async def set_free_credits(request: web.Request):
     raise web.HTTPFound(f"/admin/?{tp}&success=credits_set")
 
 
+@auth_required
+async def set_signup_credits(request: web.Request):
+    """Change the number of paid credits for new users."""
+    tp = token_param(request)
+    data = await request.post()
+    try:
+        new_value = int(data.get("credits", config.credits_on_signup))
+        if 0 <= new_value <= 100:
+            config.credits_on_signup = new_value
+            persist_env_var("CREDITS_ON_SIGNUP", str(new_value))
+            logger.info(f"Paid credits on signup changed to {new_value} via admin panel")
+    except (ValueError, TypeError):
+        pass
+    raise web.HTTPFound(f"/admin/?{tp}&success=signup_credits_set")
+
+
 
 @auth_required
 async def credit_user(request: web.Request):
@@ -1157,6 +1185,7 @@ def create_admin_app() -> web.Application:
     app.router.add_get("/admin/", dashboard)
     app.router.add_post("/admin/set_model", set_model)
     app.router.add_post("/admin/set_free_credits", set_free_credits)
+    app.router.add_post("/admin/set_signup_credits", set_signup_credits)
     app.router.add_post("/admin/set_daily_limit", set_daily_limit)
     app.router.add_post("/admin/toggle_russian_prefix", toggle_russian_prefix)
     app.router.add_post("/admin/toggle_video_generation", toggle_video_generation)

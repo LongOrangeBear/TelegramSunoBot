@@ -137,8 +137,8 @@ async def get_or_create_user(telegram_id: int, username: str | None, first_name:
                VALUES ($1, $2, $3, $4, $5, $6)
                RETURNING *""",
             telegram_id, username, first_name,
-            0,  # credits start at 0
-            config.free_credits_on_signup,
+            config.credits_on_signup,  # paid credits (default 0)
+            config.free_credits_on_signup,  # free preview credits
             referred_by,
         )
         logger.info(f"New user registered: {telegram_id} ({username}), referred_by={referred_by}")

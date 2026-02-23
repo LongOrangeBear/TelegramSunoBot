@@ -68,6 +68,7 @@ class Config:
     max_generations_per_hour: int = int(os.getenv("MAX_GENERATIONS_PER_HOUR", "30"))
     max_generations_per_user_per_day: int = int(os.getenv("MAX_GENERATIONS_PER_USER_PER_DAY", "10"))
     free_credits_on_signup: int = int(os.getenv("FREE_CREDITS_ON_SIGNUP", "2"))
+    credits_on_signup: int = int(os.getenv("CREDITS_ON_SIGNUP", "0"))
     min_account_age_hours: int = int(os.getenv("MIN_ACCOUNT_AGE_HOURS", "0"))
     min_telegram_user_id: int = int(os.getenv("MIN_TELEGRAM_USER_ID", "0"))
 

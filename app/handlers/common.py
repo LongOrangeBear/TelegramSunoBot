@@ -25,10 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 def _build_tariff_lines() -> str:
-    """Build tariff text lines for balance page."""
+    """Build tariff text lines for balance page (Stars + RUB)."""
     lines = []
-    for pkg in config.credit_packages:
-        lines.append(f"💰 {pkg['label']}")
+    stars = config.credit_packages
+    rub = config.credit_packages_rub
+    for i, pkg in enumerate(stars):
+        rub_price = rub[i]["rub"] if i < len(rub) else "?"
+        lines.append(f"🎵 {pkg['credits']}🎵 — ⭐{pkg['stars']} / {rub_price}₽")
     return "\n".join(lines)
 
 
@@ -119,9 +122,14 @@ async def _show_balance(message, user_id: int):
     if not user:
         await message.answer("Используйте /start для начала.", reply_markup=main_reply_kb())
         return
-    total = user["credits"] + user["free_generations_left"]
+    free = user["free_generations_left"]
+    if free > 0:
+        free_line = f"🎁 Бесплатных: <b>{free}</b> (только превью 30 сек + обложки)\n"
+    else:
+        free_line = ""
     text = BALANCE_PAGE.format(
-        balance=total,
+        credits=user["credits"],
+        free_line=free_line,
         tariffs=_build_tariff_lines(),
     )
     await message.answer(text, parse_mode="HTML", reply_markup=balance_kb())
@@ -160,16 +168,7 @@ async def cmd_history(message: Message):
 
 @router.message(Command("buy"))
 async def cmd_buy(message: Message):
-    user = await db.get_user(message.from_user.id)
-    if not user:
-        await message.answer("Используйте /start для начала.")
-        return
-    total = user["credits"] + user["free_generations_left"]
-    text = BALANCE_PAGE.format(
-        balance=total,
-        tariffs=_build_tariff_lines(),
-    )
-    await message.answer(text, parse_mode="HTML", reply_markup=balance_kb())
+    await _show_balance(message, message.from_user.id)
 
 
 @router.message(Command("create"))
@@ -187,9 +186,11 @@ async def cb_back_balance(callback: CallbackQuery):
     if not user:
         await callback.answer("Используйте /start")
         return
-    total = user["credits"] + user["free_generations_left"]
+    free = user["free_generations_left"]
+    free_line = f"🎁 Бесплатных: <b>{free}</b> (только превью 30 сек + обложки)\n" if free > 0 else ""
     text = BALANCE_PAGE.format(
-        balance=total,
+        credits=user["credits"],
+        free_line=free_line,
         tariffs=_build_tariff_lines(),
     )
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=balance_kb())
