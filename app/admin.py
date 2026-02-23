@@ -451,6 +451,8 @@ async def dashboard(request: web.Request):
     elif success == "video_generation":
         status = "включена" if config.video_generation_enabled else "выключена"
         success_html = f'<span class="success-msg">✅ Генерация видео {status}</span>'
+    elif success == "preview_settings":
+        success_html = f'<span class="success-msg">✅ Настройки превью: старт {config.preview_start_percent}%, длительность {config.preview_duration_sec}сек</span>'
 
     content = f"""
     <h1>📊 Дашборд</h1>
@@ -562,6 +564,19 @@ async def dashboard(request: web.Request):
                     </form>
                 </td>
                 <td>Генерирует MP4 видеоклип после создания аудио (доп. расход кредитов API)</td>
+            </tr>
+            <tr>
+                <td>🎧 Превью трека</td>
+                <td>
+                    <form method="POST" action="/admin/set_preview_settings?{tp}" class="admin-form">
+                        <label style="color:#6b7280;font-size:12px;">Старт %</label>
+                        <input type="number" name="start_percent" value="{config.preview_start_percent}" min="0" max="90" class="admin-input" style="width:60px;">
+                        <label style="color:#6b7280;font-size:12px;">Длит. сек</label>
+                        <input type="number" name="duration_sec" value="{config.preview_duration_sec}" min="5" max="120" class="admin-input" style="width:60px;">
+                        <button type="submit" class="admin-btn">Сохранить</button>
+                    </form>
+                </td>
+                <td>Настройки превью для бесплатных генераций: откуда начинать (в % от трека) и сколько секунд</td>
             </tr>
         </tbody>
     </table>
@@ -1091,6 +1106,23 @@ async def toggle_video_generation(request: web.Request):
     raise web.HTTPFound(f"/admin/?{tp}&success=video_generation")
 
 
+@auth_required
+async def set_preview_settings(request: web.Request):
+    """Update preview start percent and duration."""
+    tp = token_param(request)
+    data = await request.post()
+    start_pct = int(data.get("start_percent", config.preview_start_percent))
+    dur_sec = int(data.get("duration_sec", config.preview_duration_sec))
+    start_pct = max(0, min(90, start_pct))
+    dur_sec = max(5, min(120, dur_sec))
+    config.preview_start_percent = start_pct
+    config.preview_duration_sec = dur_sec
+    persist_env_var("PREVIEW_START_PERCENT", str(start_pct))
+    persist_env_var("PREVIEW_DURATION_SEC", str(dur_sec))
+    logger.info(f"Admin set preview: start={start_pct}%, duration={dur_sec}s")
+    raise web.HTTPFound(f"/admin/?{tp}&success=preview_settings")
+
+
 # ─── App factory ───
 
 def create_admin_app() -> web.Application:
@@ -1102,6 +1134,7 @@ def create_admin_app() -> web.Application:
     app.router.add_post("/admin/set_daily_limit", set_daily_limit)
     app.router.add_post("/admin/toggle_russian_prefix", toggle_russian_prefix)
     app.router.add_post("/admin/toggle_video_generation", toggle_video_generation)
+    app.router.add_post("/admin/set_preview_settings", set_preview_settings)
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
     app.router.add_post("/admin/user/{id}/credit", credit_user)

@@ -81,6 +81,10 @@ class Config:
     unlock_price_stars: int = int(os.getenv("UNLOCK_PRICE_STARS", "75"))
     unlock_price_rub: int = int(os.getenv("UNLOCK_PRICE_RUB", "100"))
 
+    # Preview settings (for free generations)
+    preview_start_percent: int = int(os.getenv("PREVIEW_START_PERCENT", "33"))
+    preview_duration_sec: int = int(os.getenv("PREVIEW_DURATION_SEC", "30"))
+
     # Admin panel
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     admin_port: int = int(os.getenv("ADMIN_PORT", "8080"))

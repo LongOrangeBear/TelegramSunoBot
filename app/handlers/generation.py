@@ -133,6 +133,14 @@ async def cb_create(callback: CallbackQuery, state: FSMContext):
 async def cb_mode(callback: CallbackQuery, state: FSMContext):
     mode = callback.data.split(":")[1]
 
+    # Map mode to feedback text
+    mode_feedback = {
+        "idea": "💡 Режим: Есть идея",
+        "lyrics": "📝 Режим: Есть стихи",
+        "greeting": "🎉 Режим: Поздравить",
+        "stories": "📱 Режим: Настроение для сторис",
+    }
+
     if mode == "lyrics":
         await state.update_data(mode="lyrics")
     elif mode == "greeting":
@@ -145,7 +153,7 @@ async def cb_mode(callback: CallbackQuery, state: FSMContext):
     # All modes go through gender → style first
     await state.set_state(GenerationStates.choosing_gender)
     await callback.message.edit_text(CHOOSE_GENDER, parse_mode="HTML", reply_markup=gender_kb())
-    await callback.answer()
+    await callback.answer(mode_feedback.get(mode, "✅ Режим выбран"))
 
 
 @router.callback_query(F.data == "back_mode")
@@ -718,17 +726,33 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
                         resp.raise_for_status()
                         audio_data = resp.content
 
-                    preview_data = await create_preview(audio_data)
-                    voice_file = BufferedInputFile(
-                        preview_data,
-                        filename=f"preview_{i+1}.ogg",
-                    )
-                    await message.answer_voice(
-                        voice_file,
-                        caption=PREVIEW_CAPTION.format(title=title),
-                        parse_mode="HTML",
-                        reply_markup=preview_track_kb(gen_id, i),
-                    )
+                    try:
+                        preview_data = await create_preview(audio_data)
+                        voice_file = BufferedInputFile(
+                            preview_data,
+                            filename=f"preview_{i+1}.ogg",
+                        )
+                        await message.answer_voice(
+                            voice_file,
+                            caption=PREVIEW_CAPTION.format(title=title),
+                            parse_mode="HTML",
+                            reply_markup=preview_track_kb(gen_id, i),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Preview creation failed for track {i}, sending full audio as fallback: {e}")
+                        # Fallback: send full audio file
+                        audio_file = BufferedInputFile(
+                            audio_data,
+                            filename=f"{title}.mp3",
+                        )
+                        await message.answer_audio(
+                            audio_file,
+                            title=f"🎧 {title}",
+                            performer="AI Melody",
+                            caption=PREVIEW_CAPTION.format(title=title),
+                            parse_mode="HTML",
+                            reply_markup=preview_track_kb(gen_id, i),
+                        )
                 except Exception as e:
                     logger.error(f"Failed to send preview {i}: {e}")
 
@@ -783,7 +807,7 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
 
         # Video generation (if enabled)
         logger.info(f"Video check: enabled={config.video_generation_enabled}, song_ids={song_ids}, task_id={task_id}")
-        if config.video_generation_enabled:
+        if not is_free and config.video_generation_enabled:
             from app.handlers.callback import register_video_task
             get_bot = lambda b=message.bot: b
             for i, url in enumerate(audio_urls[:2]):

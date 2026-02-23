@@ -199,7 +199,7 @@ STORIES_MOODS = [
     ("💪 Энергично", "powerful"),
     ("🌸 Нежно", "gentle"),
     ("🌆 Вечернее", "evening"),
-    ("😈 Дерзко", "provocative"),
+    ("😈 Провокационно", "provocative"),
     ("🌞 Позитивно", "sunny"),
 ]
 
@@ -344,7 +344,7 @@ def preview_after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
     """Keyboard shown after preview tracks: create another (no regenerate for free)."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🎵 Создать другую", callback_data="create"),
+        InlineKeyboardButton(text="🎵 Создать новую песню", callback_data="create"),
     )
     return builder.as_markup()
 
@@ -356,7 +356,7 @@ def after_generation_kb(gen_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔄 Ещё варианты (−1🎵)", callback_data=f"regenerate:{gen_id}"),
     )
     builder.row(
-        InlineKeyboardButton(text="🎵 Создать другую", callback_data="create"),
+        InlineKeyboardButton(text="🎵 Создать новую песню", callback_data="create"),
     )
     return builder.as_markup()
 

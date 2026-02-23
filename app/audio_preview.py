@@ -1,38 +1,41 @@
-"""Audio preview utilities for creating 30-second voice previews."""
+"""Audio preview utilities for creating short voice previews."""
 
 import logging
 from io import BytesIO
 
+from app.config import config
+
 logger = logging.getLogger(__name__)
 
-PREVIEW_DURATION_SEC = 30
 
-
-async def create_preview(audio_data: bytes, duration_sec: int = PREVIEW_DURATION_SEC) -> bytes:
+async def create_preview(audio_data: bytes) -> bytes:
     """
     Trim MP3 to a short preview and convert to OGG Opus for Telegram voice message.
     
-    Takes a segment from ~1/3 of the track (closer to the chorus) rather than
-    the beginning, which is usually an intro.
+    Uses config.preview_start_percent and config.preview_duration_sec for settings.
+    The preview starts at the configured percentage of the track (default ~1/3,
+    closer to the chorus) rather than the beginning, which is usually an intro.
     
     Args:
         audio_data: Raw MP3 bytes
-        duration_sec: Duration of preview in seconds (default 30)
     
     Returns:
         OGG Opus bytes suitable for Telegram voice message
     """
     from pydub import AudioSegment
 
+    duration_sec = config.preview_duration_sec
+    start_percent = config.preview_start_percent
+
     try:
         audio = AudioSegment.from_mp3(BytesIO(audio_data))
         
-        # Start from ~1/3 of the track (usually closer to the chorus)
+        # Start from the configured percentage of the track
         total_ms = len(audio)
-        start_ms = max(0, total_ms // 3)
+        start_ms = max(0, int(total_ms * start_percent / 100))
         end_ms = min(start_ms + duration_sec * 1000, total_ms)
         
-        # If not enough audio from 1/3 point, take from the beginning
+        # If not enough audio from that point, take from the beginning
         if end_ms - start_ms < duration_sec * 1000 * 0.5:
             start_ms = 0
             end_ms = min(duration_sec * 1000, total_ms)

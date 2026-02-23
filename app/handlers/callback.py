@@ -281,18 +281,35 @@ async def _deliver_result_to_user(
 
                 if is_free:
                     # ─── FREE: Send voice preview ───
-                    preview_data = await create_preview(audio_data)
-                    voice_file = BufferedInputFile(
-                        preview_data,
-                        filename=f"preview_{i+1}.ogg",
-                    )
-                    await bot.send_voice(
-                        chat_id=chat_id,
-                        voice=voice_file,
-                        caption=PREVIEW_CAPTION.format(title=title),
-                        parse_mode="HTML",
-                        reply_markup=preview_track_kb(gen_id, i),
-                    )
+                    try:
+                        preview_data = await create_preview(audio_data)
+                        voice_file = BufferedInputFile(
+                            preview_data,
+                            filename=f"preview_{i+1}.ogg",
+                        )
+                        await bot.send_voice(
+                            chat_id=chat_id,
+                            voice=voice_file,
+                            caption=PREVIEW_CAPTION.format(title=title),
+                            parse_mode="HTML",
+                            reply_markup=preview_track_kb(gen_id, i),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Callback: preview creation failed for track {i}, sending full audio as fallback: {e}")
+                        # Fallback: send full audio file
+                        audio_file = BufferedInputFile(
+                            audio_data,
+                            filename=f"{title}.mp3",
+                        )
+                        await bot.send_audio(
+                            chat_id=chat_id,
+                            audio=audio_file,
+                            title=f"🎧 {title}",
+                            performer="AI Melody",
+                            caption=PREVIEW_CAPTION.format(title=title),
+                            parse_mode="HTML",
+                            reply_markup=preview_track_kb(gen_id, i),
+                        )
                 else:
                     # ─── PAID: Send full MP3 ───
                     audio_file = BufferedInputFile(
