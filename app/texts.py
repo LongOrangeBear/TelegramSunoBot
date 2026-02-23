@@ -282,7 +282,7 @@ PREVIEW_GENERATION_COMPLETE = (
 
 UNLOCK_SUCCESS = (
     "✅ <b>Трек разблокирован!</b>\n\n"
-    "Вот полная версия вашей песни:"
+    "Вот полные версии обоих вариантов вашей песни:"
 )
 
 UNLOCK_NO_CREDITS = (

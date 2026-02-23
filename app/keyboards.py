@@ -299,7 +299,7 @@ def preview_track_kb(gen_id: int, idx: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text=f"🎵 Купить полный трек — {config.unlock_price_stars}⭐",
+            text="🎵 Купить полный трек — 1🎵",
             callback_data=f"buy_track:{gen_id}:{idx}",
         ),
     )

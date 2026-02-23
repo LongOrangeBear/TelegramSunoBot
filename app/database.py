@@ -174,6 +174,16 @@ async def use_free_generation(telegram_id: int) -> bool:
         return row is not None
 
 
+async def update_free_credits(telegram_id: int, delta: int) -> int:
+    """Add (positive) or subtract (negative) free credits. Returns new balance."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE users SET free_generations_left = free_generations_left + $2 WHERE telegram_id = $1 RETURNING free_generations_left",
+            telegram_id, delta,
+        )
+        return row["free_generations_left"]
+
+
 async def update_last_generation(telegram_id: int):
     async with pool.acquire() as conn:
         await conn.execute(

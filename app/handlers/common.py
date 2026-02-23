@@ -110,7 +110,12 @@ async def btn_create(message: Message, state: FSMContext):
 @router.message(F.text == BTN_BALANCE)
 async def btn_balance(message: Message):
     """Handle 'Баланс' reply button."""
-    user = await db.get_user(message.from_user.id)
+    await _show_balance(message, message.from_user.id)
+
+
+async def _show_balance(message, user_id: int):
+    """Reusable helper to show balance page. Can be called from other modules."""
+    user = await db.get_user(user_id)
     if not user:
         await message.answer("Используйте /start для начала.", reply_markup=main_reply_kb())
         return
@@ -144,16 +149,7 @@ async def cmd_help(message: Message):
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message):
-    user = await db.get_user(message.from_user.id)
-    if not user:
-        await message.answer("Используйте /start для начала.")
-        return
-    total = user["credits"] + user["free_generations_left"]
-    text = BALANCE_PAGE.format(
-        balance=total,
-        tariffs=_build_tariff_lines(),
-    )
-    await message.answer(text, parse_mode="HTML", reply_markup=balance_kb())
+    await _show_balance(message, message.from_user.id)
 
 
 @router.message(Command("history"))

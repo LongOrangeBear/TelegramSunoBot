@@ -689,6 +689,9 @@ async def user_detail(request: web.Request):
         success_html = f'<span class="success-msg">✅ Начислено {amount}🎵</span>'
     elif success == "counter_reset":
         success_html = '<span class="success-msg">✅ Счётчик генераций сброшен</span>'
+    elif success == "free_credited":
+        amount = request.query.get("amount", "")
+        success_html = f'<span class="success-msg">✅ Начислено {amount} бесплатных (превью)</span>'
 
     # Get today's generation count
     today_count = await db.count_user_generations_today(telegram_id)
@@ -776,6 +779,10 @@ async def user_detail(request: web.Request):
         <form method="POST" action="/admin/user/{telegram_id}/credit?{tp}" class="admin-form">
             <input type="number" name="amount" placeholder="Кол-во" min="1" max="1000" class="admin-input" required>
             <button type="submit" class="admin-btn admin-btn-green">🎵 Начислить кредиты</button>
+        </form>
+        <form method="POST" action="/admin/user/{telegram_id}/credit_free?{tp}" class="admin-form">
+            <input type="number" name="amount" placeholder="Кол-во" min="1" max="100" class="admin-input" required>
+            <button type="submit" class="admin-btn" style="background: linear-gradient(135deg, #0891b2, #06b6d4);">🎁 Начислить бесплатные (превью)</button>
         </form>
         <form method="POST" action="/admin/user/{telegram_id}/reset_counter?{tp}" class="admin-form">
             <span style="color: #6b7280; font-size: 13px;">Сегодня: <b style="color:#a78bfa;">{today_count}/{config.max_generations_per_user_per_day}</b></span>
@@ -1059,6 +1066,25 @@ async def credit_user(request: web.Request):
 
 
 @auth_required
+async def credit_user_free(request: web.Request):
+    """Add free (preview) credits to a user."""
+    tp = token_param(request)
+    telegram_id = int(request.match_info["id"])
+    data = await request.post()
+    try:
+        amount = int(data.get("amount", 0))
+        if 1 <= amount <= 100:
+            await db.update_free_credits(telegram_id, amount)
+            await db.log_balance_transaction(
+                telegram_id, amount, 'admin', 'Бесплатные кредиты (превью) от админа',
+            )
+            logger.info(f"Admin gave {amount} free credits to user {telegram_id}")
+    except (ValueError, TypeError):
+        amount = 0
+    raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=free_credited&amount={amount}")
+
+
+@auth_required
 async def set_daily_limit(request: web.Request):
     """Change the daily generation limit per user."""
     tp = token_param(request)
@@ -1138,6 +1164,7 @@ def create_admin_app() -> web.Application:
     app.router.add_get("/admin/users", users_list)
     app.router.add_get("/admin/user/{id}", user_detail)
     app.router.add_post("/admin/user/{id}/credit", credit_user)
+    app.router.add_post("/admin/user/{id}/credit_free", credit_user_free)
     app.router.add_post("/admin/user/{id}/reset_counter", reset_daily_counter)
     app.router.add_get("/admin/generations", generations_list)
     app.router.add_get("/admin/payments", payments_list)

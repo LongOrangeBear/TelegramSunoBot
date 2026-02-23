@@ -1040,24 +1040,28 @@ async def cb_buy_track(callback: CallbackQuery):
     # Check if already unlocked
     if gen.get("is_unlocked"):
         await callback.answer(UNLOCK_ALREADY, show_alert=True)
-        # Re-send the full track anyway
+        # Re-send all tracks
         urls = gen["audio_urls"]
-        if idx < len(urls) and urls[idx]:
+        for i, url in enumerate(urls[:2]):
+            if not url:
+                continue
             try:
                 async with httpx.AsyncClient() as http:
-                    resp = await http.get(urls[idx], timeout=60.0)
+                    resp = await http.get(url, timeout=60.0)
                     resp.raise_for_status()
                     audio_data = resp.content
                 title = gen.get("prompt", "AI Melody Track")[:60]
-                audio_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
+                track_title = f"{title} (вариант {i+1})"
+                audio_file = BufferedInputFile(audio_data, filename=f"{track_title}.mp3")
+                caption = UNLOCK_SUCCESS if i == 0 else ""
                 await callback.message.answer_audio(
-                    audio_file, caption=UNLOCK_SUCCESS,
-                    title=title, performer="AI Melody",
+                    audio_file, caption=caption,
+                    title=track_title, performer="AI Melody",
                     parse_mode="HTML",
-                    reply_markup=track_kb(gen_id, idx),
+                    reply_markup=track_kb(gen_id, i),
                 )
             except Exception as e:
-                logger.error(f"Re-send unlocked track error: {e}")
+                logger.error(f"Re-send unlocked track {i} error: {e}")
         return
 
     urls = gen["audio_urls"]
@@ -1066,7 +1070,6 @@ async def cb_buy_track(callback: CallbackQuery):
         return
 
     # Check if user has credits to buy
-    price = config.unlock_price_stars
     if user["credits"] >= 1:
         # Pay with existing credits
         await db.update_user_credits(callback.from_user.id, -1)
@@ -1075,21 +1078,26 @@ async def cb_buy_track(callback: CallbackQuery):
         )
         await db.unlock_generation(gen_id)
 
-        # Send full MP3
+        # Send all full MP3 tracks
         try:
-            async with httpx.AsyncClient() as http:
-                resp = await http.get(urls[idx], timeout=60.0)
-                resp.raise_for_status()
-                audio_data = resp.content
+            for i, url in enumerate(urls[:2]):
+                if not url:
+                    continue
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(url, timeout=60.0)
+                    resp.raise_for_status()
+                    audio_data = resp.content
 
-            title = gen.get("prompt", "AI Melody Track")[:60]
-            audio_file = BufferedInputFile(audio_data, filename=f"{title}.mp3")
-            await callback.message.answer_audio(
-                audio_file, caption=UNLOCK_SUCCESS,
-                title=title, performer="AI Melody",
-                parse_mode="HTML",
-                reply_markup=track_kb(gen_id, idx),
-            )
+                title = gen.get("prompt", "AI Melody Track")[:60]
+                track_title = f"{title} (вариант {i+1})"
+                audio_file = BufferedInputFile(audio_data, filename=f"{track_title}.mp3")
+                caption = UNLOCK_SUCCESS if i == 0 else ""
+                await callback.message.answer_audio(
+                    audio_file, caption=caption,
+                    title=track_title, performer="AI Melody",
+                    parse_mode="HTML",
+                    reply_markup=track_kb(gen_id, i),
+                )
             await callback.answer("✅ Трек куплен!")
 
             # Trigger video generation if enabled
@@ -1098,8 +1106,6 @@ async def cb_buy_track(callback: CallbackQuery):
                     client = get_suno_client()
                     from app.handlers.callback import register_video_task
                     task_id = gen["suno_song_ids"][0]
-                    # Find the song_id for this specific track
-                    # For now, use the task_id
                     get_bot = lambda b=callback.bot: b
                     video_result = await client.generate_video(task_id, task_id)
                     register_video_task(
@@ -1120,16 +1126,10 @@ async def cb_buy_track(callback: CallbackQuery):
             )
             await callback.answer("Ошибка доставки трека. Кредит возвращён.", show_alert=True)
     else:
-        # No credits — suggest buying via Stars
-        from aiogram.types import LabeledPrice
-        await callback.message.answer_invoice(
-            title="🎵 Полный трек",
-            description="Разблокировка полной версии трека в MP3",
-            payload=f"unlock:{gen_id}:{idx}",
-            currency="XTR",
-            prices=[LabeledPrice(label="Полный трек", amount=price)],
-        )
-        await callback.answer()
+        # No credits — show balance page with all payment options
+        from app.handlers.common import _show_balance
+        await callback.answer("❌ Недостаточно баллов. Пополните баланс!", show_alert=True)
+        await _show_balance(callback.message, callback.from_user.id)
 
 
 @router.callback_query(F.data.startswith("regenerate:"))
