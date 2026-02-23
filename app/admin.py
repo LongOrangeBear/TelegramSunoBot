@@ -455,6 +455,10 @@ async def dashboard(request: web.Request):
         success_html = f'<span class="success-msg">✅ Генерация видео {status}</span>'
     elif success == "preview_settings":
         success_html = f'<span class="success-msg">✅ Настройки превью: старт {config.preview_start_percent}%, длительность {config.preview_duration_sec}сек</span>'
+    elif success == "mass_credit":
+        mc_amount = request.query.get("amount", "?")
+        mc_total = request.query.get("total", "?")
+        success_html = f'<span class="success-msg">✅ Начислено {mc_amount}🎵 для {mc_total} пользователей! Уведомления отправляются...</span>'
 
     content = f"""
     <h1>📊 Дашборд</h1>
@@ -609,6 +613,19 @@ async def dashboard(request: web.Request):
             </tr>
         </tbody>
     </table>
+
+    <div class="section-title">🎁 Массовое начисление кредитов</div>
+    <form method="POST" action="/admin/mass_credit_confirm?{tp}" class="admin-form" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+        <div>
+            <label style="color:#6b7280;font-size:12px;">Кол-во 🎵 каждому</label>
+            <input type="number" name="amount" min="1" max="100" value="1" class="admin-input" required style="width:80px;">
+        </div>
+        <div style="flex:1; min-width:200px;">
+            <label style="color:#6b7280;font-size:12px;">Сообщение пользователям</label>
+            <input type="text" name="message" placeholder="Напр. С 23 февраля! 🎉" class="admin-input" required style="width:100%;">
+        </div>
+        <button type="submit" class="admin-btn admin-btn-green">🎁 Начислить всем</button>
+    </form>
     """
     return web.Response(
         text=base_html("Дашборд", content, tp),
@@ -1195,6 +1212,114 @@ async def set_preview_settings(request: web.Request):
     raise web.HTTPFound(f"/admin/?{tp}&success=preview_settings")
 
 
+@auth_required
+async def mass_credit_confirm(request: web.Request):
+    """Show confirmation page before mass crediting all users."""
+    tp = token_param(request)
+    data = await request.post()
+    amount = int(data.get("amount", 0))
+    message_text = data.get("message", "").strip()
+
+    if amount < 1 or amount > 100 or not message_text:
+        raise web.HTTPFound(f"/admin/?{tp}")
+
+    user_count = await db.admin_get_stats()
+    total_users = user_count["users_count"]
+
+    content = f"""
+    <h1>🎁 Подтверждение массового начисления</h1>
+
+    <div style="background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <p style="color: #facc15; font-size: 18px; margin: 0 0 12px 0;">⚠️ Внимание!</p>
+        <p>Вы собираетесь начислить <b style="color:#4ade80;">{amount}🎵</b> кредитов <b>каждому</b> из <b style="color:#60a5fa;">{total_users}</b> пользователей.</p>
+        <p>Каждый пользователь получит уведомление:</p>
+        <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; margin: 8px 0;">
+            🎵 Вам начислено <b>{amount}🎵</b>!<br><br>
+            {message_text}
+        </div>
+    </div>
+
+    <div style="display:flex; gap:16px;">
+        <form method="POST" action="/admin/mass_credit_execute?{tp}">
+            <input type="hidden" name="amount" value="{amount}">
+            <input type="hidden" name="message" value="{message_text}">
+            <button type="submit" class="admin-btn admin-btn-green" style="font-size:16px; padding: 12px 32px;">✅ Подтвердить и начислить</button>
+        </form>
+        <a href="/admin/?{tp}" class="admin-btn" style="display:inline-flex;align-items:center;text-decoration:none;padding:12px 32px;">❌ Отменить</a>
+    </div>
+    """
+    return web.Response(
+        text=base_html("Подтверждение начисления", content, tp),
+        content_type="text/html",
+    )
+
+
+@auth_required
+async def mass_credit_execute(request: web.Request):
+    """Execute mass credit: add credits to all users and send notifications."""
+    import asyncio
+    tp = token_param(request)
+    data = await request.post()
+    amount = int(data.get("amount", 0))
+    message_text = data.get("message", "").strip()
+
+    if amount < 1 or amount > 100 or not message_text:
+        raise web.HTTPFound(f"/admin/?{tp}")
+
+    user_ids = await db.get_all_user_ids()
+    total = len(user_ids)
+
+    # Credit all users in DB
+    credited = 0
+    for uid in user_ids:
+        try:
+            await db.update_user_credits(uid, amount)
+            await db.log_balance_transaction(
+                uid, amount, 'admin', f'Массовое начисление: {message_text[:80]}',
+            )
+            credited += 1
+        except Exception as e:
+            logger.warning(f"Mass credit DB error for {uid}: {e}")
+
+    logger.info(f"Mass credit: {credited}/{total} users got {amount} credits")
+
+    # Send notifications in background
+    get_bot = request.app.get("get_bot")
+    if get_bot:
+        bot = get_bot()
+        notification_text = (
+            f"🎵 <b>Вам начислено {amount}🎵!</b>\n\n"
+            f"{message_text}"
+        )
+
+        async def _send_notifications():
+            sent = 0
+            blocked = 0
+            failed = 0
+            for uid in user_ids:
+                try:
+                    await bot.send_message(
+                        chat_id=uid,
+                        text=notification_text,
+                        parse_mode="HTML",
+                    )
+                    sent += 1
+                except Exception as e:
+                    err = str(e).lower()
+                    if "blocked" in err or "deactivated" in err or "not found" in err:
+                        blocked += 1
+                    else:
+                        failed += 1
+                await asyncio.sleep(0.04)
+            logger.info(
+                f"Mass credit notifications: sent={sent} blocked={blocked} failed={failed} total={total}"
+            )
+
+        asyncio.create_task(_send_notifications())
+
+    raise web.HTTPFound(f"/admin/?{tp}&success=mass_credit&amount={amount}&total={total}")
+
+
 # ─── App factory ───
 
 def create_admin_app() -> web.Application:
@@ -1215,4 +1340,6 @@ def create_admin_app() -> web.Application:
     app.router.add_post("/admin/user/{id}/reset_counter", reset_daily_counter)
     app.router.add_get("/admin/generations", generations_list)
     app.router.add_get("/admin/payments", payments_list)
+    app.router.add_post("/admin/mass_credit_confirm", mass_credit_confirm)
+    app.router.add_post("/admin/mass_credit_execute", mass_credit_execute)
     return app
