@@ -93,9 +93,17 @@ def _was_truncated(g: dict) -> bool:
 def _build_modal_html(g: dict) -> str:
     """Build hidden data divs for the generation detail modal."""
     import html as html_mod
-    gen_lyrics = g.get("generated_lyrics") or ""
-    edited_lyrics = g.get("edited_lyrics") or ""
-    accented_lyrics = g.get("accented_lyrics") or ""
+    # Sanitize strings from DB that may contain surrogate characters
+    def _s(val):
+        if not val:
+            return ""
+        if isinstance(val, str):
+            return val.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
+        return str(val)
+
+    gen_lyrics = _s(g.get("generated_lyrics"))
+    edited_lyrics = _s(g.get("edited_lyrics"))
+    accented_lyrics = _s(g.get("accented_lyrics"))
 
     if not gen_lyrics:
         return "\u2014"
@@ -104,10 +112,10 @@ def _build_modal_html(g: dict) -> str:
 
     # Build generation info fields
     mode_label = _mode_label(g)
-    prompt_text = g.get("prompt") or "\u2014"
-    style_text = g.get("style") or "\u2014"
-    voice_text = g.get("voice_gender") or "\u2014"
-    title_text = g.get("generated_title") or "\u2014"
+    prompt_text = _s(g.get("prompt")) or "\u2014"
+    style_text = _s(g.get("style")) or "\u2014"
+    voice_text = _s(g.get("voice_gender")) or "\u2014"
+    title_text = _s(g.get("generated_title")) or "\u2014"
 
     # Parse raw_input for original user inputs and GPT compression info
     raw_input_html = ""
