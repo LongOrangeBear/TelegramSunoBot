@@ -117,8 +117,8 @@ def _build_modal_html(g: dict) -> str:
     voice_text = _s(g.get("voice_gender")) or "\u2014"
     title_text = _s(g.get("generated_title")) or "\u2014"
 
-    # Parse raw_input for original user inputs and GPT compression info
-    raw_input_html = ""
+    # Parse raw_input for user wizard fields and GPT compression info
+    raw_input_fields = []  # list of (label, value) tuples
     gpt_prompt_original = ""
     gpt_prompt_sent = ""
     was_gpt_compressed = False
@@ -126,47 +126,52 @@ def _build_modal_html(g: dict) -> str:
     if raw:
         try:
             raw_data = json.loads(raw)
-            # Extract GPT compression data
             gpt_prompt_original = raw_data.pop("lyrics_prompt_original", "")
             gpt_prompt_sent = raw_data.pop("lyrics_prompt_sent", "")
             was_gpt_compressed = raw_data.pop("gpt_compressed", False)
 
-            raw_parts = []
             field_labels = {
-                "text": "\u0422\u0435\u043a\u0441\u0442",
-                "recipient": "\u041a\u043e\u043c\u0443",
-                "name": "\u0418\u043c\u044f",
-                "occasion": "\u041f\u043e\u0432\u043e\u0434",
-                "mood": "\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043d\u0438\u0435",
-                "details": "\u0414\u0435\u0442\u0430\u043b\u0438",
-                "vibe": "\u0412\u0430\u0439\u0431",
-                "context": "\u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442",
-                "style_raw": "\u0421\u0442\u0438\u043b\u044c (\u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b)",
+                "text": "Текст",
+                "recipient": "Кому",
+                "name": "Имя",
+                "occasion": "Повод",
+                "mood": "Настроение",
+                "details": "Детали",
+                "vibe": "Вайб",
+                "context": "Контекст",
+                "style_raw": "Стиль (оригинал)",
             }
             for key, val in raw_data.items():
                 if val:
                     label = field_labels.get(key, key)
-                    raw_parts.append(f'{label}: {html_mod.escape(str(val))}')
-            if raw_parts:
-                raw_input_html = '\\n'.join(raw_parts)
+                    raw_input_fields.append((label, html_mod.escape(str(val))))
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Hidden info divs
-    info_html = (
-        f'<div class="modal-info" data-key="\u0420\u0435\u0436\u0438\u043c" style="display:none">{html_mod.escape(mode_label)}</div>'
-        f'<div class="modal-info" data-key="\u041f\u0440\u043e\u043c\u043f\u0442 (\u0441\u043e\u0431\u0440\u0430\u043d\u043d\u044b\u0439)" style="display:none">{html_mod.escape(prompt_text)}</div>'
-        f'<div class="modal-info" data-key="\u0421\u0442\u0438\u043b\u044c" style="display:none">{html_mod.escape(style_text)}</div>'
-        f'<div class="modal-info" data-key="\u0413\u043e\u043b\u043e\u0441" style="display:none">{html_mod.escape(voice_text)}</div>'
-        f'<div class="modal-info" data-key="\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a \u0418\u0418" style="display:none">{html_mod.escape(title_text)}</div>'
+    # Hidden info divs — ordered: user input → meta → assembled → GPT
+    info_html = ""
+
+    # 1) User wizard fields (each as separate row)
+    for label, val in raw_input_fields:
+        info_html += f'<div class="modal-info" data-key="{label}" style="display:none">{val}</div>'
+
+    # 2) Mode, style, voice, title
+    info_html += (
+        f'<div class="modal-info" data-key="Режим" style="display:none">{html_mod.escape(mode_label)}</div>'
+        f'<div class="modal-info" data-key="Стиль" style="display:none">{html_mod.escape(style_text)}</div>'
+        f'<div class="modal-info" data-key="Голос" style="display:none">{html_mod.escape(voice_text)}</div>'
+        f'<div class="modal-info" data-key="Заголовок ИИ" style="display:none">{html_mod.escape(title_text)}</div>'
     )
-    if raw_input_html:
-        info_html += f'<div class="modal-info" data-key="\u0412\u0432\u043e\u0434 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f" style="display:none">{raw_input_html}</div>'
+
+    # 3) Assembled prompt
+    info_html += f'<div class="modal-info" data-key="Промпт (собранный)" style="display:none">{html_mod.escape(prompt_text)}</div>'
+
+    # 4) GPT compression before/after
     if gpt_prompt_original:
-        info_html += f'<div class="modal-info" data-key="\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u0434\u043e)" style="display:none">{html_mod.escape(gpt_prompt_original)}</div>'
+        info_html += f'<div class="modal-info" data-key="Промпт Lyrics API (до)" style="display:none">{html_mod.escape(gpt_prompt_original)}</div>'
     if gpt_prompt_sent:
-        label = "🤖 \u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u043f\u043e\u0441\u043b\u0435 GPT)" if was_gpt_compressed else "\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API"
-        info_html += f'<div class="modal-info" data-key="{label}" style="display:none">{html_mod.escape(gpt_prompt_sent)}</div>'
+        lbl = "🤖 Промпт Lyrics API (после GPT)" if was_gpt_compressed else "Промпт Lyrics API (отправленный)"
+        info_html += f'<div class="modal-info" data-key="{lbl}" style="display:none">{html_mod.escape(gpt_prompt_sent)}</div>'
 
     # Lyrics data divs
     lyrics_data = f'<div class="lyrics-data" data-label="📝 \u0421\u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="" style="display:none">{html_mod.escape(gen_lyrics)}</div>'
