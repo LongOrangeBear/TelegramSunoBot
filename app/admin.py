@@ -181,7 +181,7 @@ def _build_modal_html(g: dict) -> str:
 # ─── HTML Templates ───
 
 def base_html(title: str, content: str, token: str) -> str:
-    return f"""<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
@@ -657,6 +657,8 @@ def base_html(title: str, content: str, token: str) -> str:
     </div>
 </body>
 </html>"""
+    # Sanitize any surrogate characters from DB data
+    return html.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
 
 
 # ─── Handlers ───
