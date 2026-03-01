@@ -119,6 +119,18 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='blocked_at') THEN
         ALTER TABLE users ADD COLUMN blocked_at TIMESTAMPTZ;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='generated_lyrics') THEN
+        ALTER TABLE generations ADD COLUMN generated_lyrics TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='edited_lyrics') THEN
+        ALTER TABLE generations ADD COLUMN edited_lyrics TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='generated_title') THEN
+        ALTER TABLE generations ADD COLUMN generated_title TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='generations' AND column_name='accented_lyrics') THEN
+        ALTER TABLE generations ADD COLUMN accented_lyrics TEXT;
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS balance_transactions (
@@ -247,15 +259,23 @@ async def count_referrals(telegram_id: int) -> int:
 async def create_generation(user_id: int, prompt: str, style: str,
                             voice_gender: str | None, mode: str,
                             user_mode: str | None = None,
-                            raw_input: str | None = None) -> int:
+                            raw_input: str | None = None,
+                            generated_lyrics: str | None = None,
+                            edited_lyrics: str | None = None,
+                            generated_title: str | None = None,
+                            accented_lyrics: str | None = None) -> int:
     """Create a generation record and return its ID."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """INSERT INTO generations (user_id, prompt, style, voice_gender, mode, status, user_mode, raw_input)
-               VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+            """INSERT INTO generations (user_id, prompt, style, voice_gender, mode, status,
+                   user_mode, raw_input, generated_lyrics, edited_lyrics, generated_title,
+                   accented_lyrics)
+               VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11)
                RETURNING id""",
             user_id, prompt, style, voice_gender, mode,
             user_mode or mode, raw_input,
+            generated_lyrics, edited_lyrics, generated_title,
+            accented_lyrics,
         )
         return row["id"]
 

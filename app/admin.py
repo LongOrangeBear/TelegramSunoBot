@@ -748,6 +748,22 @@ async def user_detail(request: web.Request):
         error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
+
+        # Lyrics display
+        gen_lyrics = g.get("generated_lyrics") or ""
+        edited_lyrics = g.get("edited_lyrics") or ""
+        accented_lyrics = g.get("accented_lyrics") or ""
+        lyrics_html = "—"
+        if gen_lyrics:
+            lyrics_short = (gen_lyrics[:60] + "...") if len(gen_lyrics) > 60 else gen_lyrics
+            lyrics_html = f'<div class="prompt-short">📝 {lyrics_short}</div><div class="prompt-full" style="white-space:pre-wrap;">{gen_lyrics}</div>'
+            if edited_lyrics:
+                edited_short = (edited_lyrics[:60] + "...") if len(edited_lyrics) > 60 else edited_lyrics
+                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">✏️ {edited_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#facc15;">{edited_lyrics}</div>'
+            if accented_lyrics:
+                accented_short = (accented_lyrics[:60] + "...") if len(accented_lyrics) > 60 else accented_lyrics
+                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">🔤 {accented_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#4ade80;">{accented_lyrics}</div>'
+
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
             <td>{_mode_label(g)}</td>
@@ -755,6 +771,7 @@ async def user_detail(request: web.Request):
                 <div class="prompt-short">{prompt_short}{truncated_badge}</div>
                 <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
             </td>
+            <td class="prompt-cell" onclick="togglePrompt(this)">{lyrics_html}</td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
@@ -844,6 +861,7 @@ async def user_detail(request: web.Request):
                 <th>#</th>
                 <th>Режим</th>
                 <th>Промпт (клик для раскрытия)</th>
+                <th>Текст ИИ (клик)</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
@@ -854,7 +872,7 @@ async def user_detail(request: web.Request):
             </tr>
         </thead>
         <tbody>
-            {gen_rows if gen_rows else '<tr><td colspan="10" class="empty">Нет генераций</td></tr>'}
+            {gen_rows if gen_rows else '<tr><td colspan="11" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
 
@@ -946,6 +964,22 @@ async def generations_list(request: web.Request):
         error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
+
+        # Lyrics display
+        gen_lyrics = g.get("generated_lyrics") or ""
+        edited_lyrics = g.get("edited_lyrics") or ""
+        accented_lyrics = g.get("accented_lyrics") or ""
+        lyrics_html = "—"
+        if gen_lyrics:
+            lyrics_short = (gen_lyrics[:40] + "...") if len(gen_lyrics) > 40 else gen_lyrics
+            lyrics_html = f'<div class="prompt-short">📝 {lyrics_short}</div><div class="prompt-full" style="white-space:pre-wrap;">{gen_lyrics}</div>'
+            if edited_lyrics:
+                edited_short = (edited_lyrics[:40] + "...") if len(edited_lyrics) > 40 else edited_lyrics
+                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">✏️ {edited_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#facc15;">{edited_lyrics}</div>'
+            if accented_lyrics:
+                accented_short = (accented_lyrics[:40] + "...") if len(accented_lyrics) > 40 else accented_lyrics
+                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">🔤 {accented_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#4ade80;">{accented_lyrics}</div>'
+
         rows += f"""<tr>
             <td>{g['id']}</td>
             <td><a class="link" href="/admin/user/{g['user_id']}?{tp}">{user_label}</a></td>
@@ -954,6 +988,7 @@ async def generations_list(request: web.Request):
                 <div class="prompt-short">{prompt_short}{truncated_badge}</div>
                 <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
             </td>
+            <td class="prompt-cell" onclick="togglePrompt(this)">{lyrics_html}</td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
@@ -978,6 +1013,7 @@ async def generations_list(request: web.Request):
                 <th>Пользователь</th>
                 <th>Режим</th>
                 <th>Промпт (клик)</th>
+                <th>Текст ИИ (клик)</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
@@ -988,7 +1024,7 @@ async def generations_list(request: web.Request):
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="11" class="empty">Нет генераций</td></tr>'}
+            {rows if rows else '<tr><td colspan="12" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>

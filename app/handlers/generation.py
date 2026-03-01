@@ -1,5 +1,6 @@
 """Music generation flow handlers."""
 
+import asyncio
 import json
 import logging
 from io import BytesIO
@@ -11,10 +12,13 @@ from aiogram.fsm.context import FSMContext
 
 from app import database as db
 from app.config import config
+from html import escape as html_escape
+
 from app.keyboards import (
     mode_kb, gender_kb, style_kb, track_kb, history_track_kb, after_generation_kb,
     preview_track_kb, preview_after_generation_kb,
     main_reply_kb, greeting_recipient_kb, greeting_occasion_kb, greeting_mood_kb,
+    lyrics_review_kb, lyrics_confirm_kb,
     STYLES, GREETING_RECIPIENTS, GREETING_OCCASION_LABELS, GREETING_MOOD_LABELS,
     stories_vibe_kb, stories_mood_kb, stories_name_kb,
     STORIES_VIBE_LABELS, STORIES_MOOD_LABELS,
@@ -22,6 +26,7 @@ from app.keyboards import (
 from app.states import GenerationStates
 from app.suno_api import get_suno_client, SunoApiError, ContentPolicyError
 from app.audio_preview import create_preview
+from app.accent import apply_stress_accents
 from app.texts import (
     CHOOSE_MODE, CHOOSE_GENDER, CHOOSE_STYLE,
     ENTER_PROMPT, ENTER_LYRICS, ENTER_CUSTOM_STYLE,
@@ -38,6 +43,9 @@ from app.texts import (
     GREETING_CHOOSE_MOOD, GREETING_ENTER_DETAILS,
     STORIES_CHOOSE_VIBE, STORIES_ENTER_CUSTOM_VIBE,
     STORIES_CHOOSE_MOOD, STORIES_ENTER_CONTEXT, STORIES_ENTER_NAME,
+    GENERATING_LYRICS, LYRICS_PREVIEW, LYRICS_EDIT_INSTRUCTIONS,
+    LYRICS_GENERATION_ERROR,
+    LYRICS_TOO_SHORT_WARNING, LYRICS_NO_TAGS_WARNING,
 )
 
 router = Router()
@@ -587,14 +595,11 @@ async def _assemble_stories_prompt(message: Message, state: FSMContext, user_id:
 
 
 async def do_generate(message: Message, state: FSMContext, user_id: int | None = None):
-    """Execute the generation after all inputs collected."""
+    """Entry point after all inputs collected. Routes to lyrics preview or direct custom."""
     data = await state.get_data()
     if user_id is None:
         user_id = message.from_user.id
     mode = data.get("mode", "description")
-    style = data.get("style", "")
-    voice_gender = data.get("voice_gender")
-    prompt = data.get("prompt", "")
 
     # Final credit check
     has_credits, user = await check_credits(user_id)
@@ -606,6 +611,209 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
         await state.clear()
         return
 
+    if mode == "lyrics":
+        # User already wrote lyrics — go straight to music generation
+        await do_generate_music(message, state, user_id=user_id)
+    else:
+        # All other modes: generate lyrics first, show preview
+        await do_generate_lyrics(message, state, user_id=user_id)
+
+
+async def do_generate_lyrics(message: Message, state: FSMContext, user_id: int | None = None):
+    """Step 1: Generate lyrics via Lyrics API and show for user review."""
+    data = await state.get_data()
+    if user_id is None:
+        user_id = message.from_user.id
+    prompt = data.get("prompt", "")
+
+    await state.set_state(GenerationStates.generating_lyrics)
+
+    # Status message
+    status_msg = await message.answer(
+        GENERATING_LYRICS,
+        parse_mode="HTML",
+        reply_markup=main_reply_kb(),
+    )
+
+    # Build lyrics prompt with language context
+    lyrics_prompt_parts = []
+    if config.russian_language_prefix:
+        lyrics_prompt_parts.append("песня на русском языке")
+    lyrics_prompt_parts.append(prompt)
+    lyrics_prompt = ". ".join(lyrics_prompt_parts)
+
+    try:
+        client = get_suno_client()
+        lyrics_result = await client.generate_lyrics(lyrics_prompt)
+        lyrics_data = await client.wait_for_lyrics(lyrics_result["task_id"])
+
+        # Save lyrics + title in state for later use
+        await state.update_data(
+            generated_lyrics=lyrics_data["text"],
+            generated_title=lyrics_data["title"],
+        )
+        await state.set_state(GenerationStates.reviewing_lyrics)
+
+        # Show lyrics to user (trim for Telegram 4096 char limit)
+        lyrics_display = lyrics_data["text"]
+        if len(lyrics_display) > 3500:
+            lyrics_display = lyrics_display[:3500] + "\n..."
+
+        await status_msg.edit_text(
+            LYRICS_PREVIEW.format(
+                lyrics=html_escape(lyrics_display),
+                title=html_escape(lyrics_data["title"]),
+            ),
+            parse_mode="HTML",
+            reply_markup=lyrics_review_kb(),
+        )
+
+    except ContentPolicyError:
+        count = await db.increment_content_violations(user_id)
+        try:
+            await status_msg.edit_text(
+                CONTENT_VIOLATION.format(count=count),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        await state.clear()
+
+    except SunoApiError as e:
+        logger.error(f"Lyrics API error: {e}")
+        try:
+            await status_msg.edit_text(LYRICS_GENERATION_ERROR, parse_mode="HTML")
+        except Exception:
+            pass
+        await state.clear()
+
+    except Exception as e:
+        logger.error(f"Unexpected error in lyrics generation: {e}", exc_info=True)
+        try:
+            await status_msg.edit_text(LYRICS_GENERATION_ERROR, parse_mode="HTML")
+        except Exception:
+            pass
+        await state.clear()
+
+
+# ─── Lyrics preview handlers ───
+
+@router.callback_query(F.data == "lyrics:approve")
+async def cb_lyrics_approve(callback: CallbackQuery, state: FSMContext):
+    """User approved the generated lyrics → start music generation."""
+    await callback.answer("🎵 Запускаю генерацию музыки...")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await do_generate_music(callback.message, state, user_id=callback.from_user.id)
+
+
+@router.callback_query(F.data == "lyrics:edit")
+async def cb_lyrics_edit(callback: CallbackQuery, state: FSMContext):
+    """User wants to edit lyrics."""
+    data = await state.get_data()
+    lyrics = data.get("generated_lyrics", "")
+
+    await state.set_state(GenerationStates.editing_lyrics)
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    # Trim lyrics for display in <code> block (Telegram limit)
+    lyrics_display = lyrics
+    if len(lyrics_display) > 3500:
+        lyrics_display = lyrics_display[:3500] + "\n..."
+
+    await callback.message.answer(
+        LYRICS_EDIT_INSTRUCTIONS.format(lyrics=html_escape(lyrics_display)),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(GenerationStates.editing_lyrics)
+async def on_edited_lyrics(message: Message, state: FSMContext):
+    """User sent edited lyrics text."""
+    if not message.text:
+        await message.answer(
+            "✏️ Пожалуйста, отправь отредактированный текст <b>текстовым сообщением</b>.",
+            parse_mode="HTML",
+        )
+        return
+
+    edited = message.text.strip()
+    if not edited:
+        await message.answer(
+            "✏️ Текст не может быть пустым. Отправь отредактированный текст.",
+            parse_mode="HTML",
+        )
+        return
+
+    data = await state.get_data()
+    # Save original lyrics before overwriting
+    await state.update_data(
+        _original_lyrics=data.get("generated_lyrics", ""),
+        generated_lyrics=edited,
+        _lyrics_was_edited=True,
+    )
+
+    # Validation warnings
+    import re
+    has_tags = bool(re.search(r'\[(?:Verse|Chorus|Bridge|Hook|Outro|Intro|Pre-Chorus|Refrain)\]', edited, re.IGNORECASE))
+    warnings = []
+
+    if len(edited) < 100:
+        warnings.append(LYRICS_TOO_SHORT_WARNING.format(length=len(edited)))
+    if not has_tags:
+        warnings.append(LYRICS_NO_TAGS_WARNING)
+
+    if warnings:
+        warning_text = "\n\n".join(warnings)
+        await message.answer(
+            warning_text,
+            parse_mode="HTML",
+            reply_markup=lyrics_confirm_kb(),
+        )
+        return
+
+    # No warnings — proceed directly
+    await do_generate_music(message, state)
+
+
+@router.callback_query(F.data == "lyrics:confirm_edited")
+async def cb_lyrics_confirm_edited(callback: CallbackQuery, state: FSMContext):
+    """User confirmed edited lyrics despite warnings."""
+    await callback.answer("🎵 Запускаю генерацию музыки...")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await do_generate_music(callback.message, state, user_id=callback.from_user.id)
+
+
+@router.callback_query(F.data == "lyrics:re_edit")
+async def cb_lyrics_re_edit(callback: CallbackQuery, state: FSMContext):
+    """User wants to fix their edited lyrics."""
+    data = await state.get_data()
+    lyrics = data.get("generated_lyrics", "")
+
+    await state.set_state(GenerationStates.editing_lyrics)
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    lyrics_display = lyrics
+    if len(lyrics_display) > 3500:
+        lyrics_display = lyrics_display[:3500] + "\n..."
+
+    await callback.message.answer(
+        LYRICS_EDIT_INSTRUCTIONS.format(lyrics=html_escape(lyrics_display)),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def do_generate_music(message: Message, state: FSMContext, user_id: int | None = None):
+    """Step 2: Generate music using custom mode with lyrics from state."""
+    data = await state.get_data()
+    if user_id is None:
+        user_id = message.from_user.id
+    mode = data.get("mode", "description")
+    style = data.get("style", "")
+    voice_gender = data.get("voice_gender")
+    prompt = data.get("prompt", "")
+
     await state.set_state(GenerationStates.generating)
 
     if mode == "lyrics":
@@ -615,8 +823,8 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
         )
     else:
         status_text = (
-            "🎵 Отлично! Работаю над стихами и мелодией по твоей идее...\n"
-            "Мне нужно несколько минут."
+            "🎵 Отлично! Создаю музыку по тексту...\n"
+            "Мне нужно 1-2 минуты."
         )
 
     status_msg = await message.answer(
@@ -624,6 +832,24 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
         parse_mode="HTML",
         reply_markup=main_reply_kb(),
     )
+
+    # Determine lyrics data for DB storage
+    original_lyrics = data.get("generated_lyrics")
+    generated_title = data.get("generated_title")
+    # If user edited lyrics, the current generated_lyrics differs from the original
+    # We track "edited_lyrics" only when user chose to edit
+    edited_lyrics_text = None
+    if data.get("_lyrics_was_edited"):
+        edited_lyrics_text = original_lyrics  # current value is the edited version
+
+    # Apply stress accents to lyrics before sending to Suno
+    if mode == "lyrics":
+        lyrics_for_suno = prompt
+    else:
+        lyrics_for_suno = data.get("generated_lyrics", "")
+
+    accented_text = await asyncio.to_thread(apply_stress_accents, lyrics_for_suno)
+    logger.info(f"Accent applied to lyrics, length: {len(lyrics_for_suno)} -> {len(accented_text)}")
 
     gen_id = await db.create_generation(
         user_id=user_id,
@@ -633,37 +859,35 @@ async def do_generate(message: Message, state: FSMContext, user_id: int | None =
         mode=mode,
         user_mode=data.get("user_mode"),
         raw_input=data.get("raw_input"),
+        generated_lyrics=data.get("_original_lyrics") or original_lyrics,
+        edited_lyrics=edited_lyrics_text,
+        generated_title=generated_title,
+        accented_lyrics=accented_text,
     )
 
     try:
         client = get_suno_client()
 
-        # For lyrics mode: use custom mode and pass user's text as lyrics
         if mode == "lyrics":
+            # User's own lyrics — use accented version
             result = await client.generate(
-                prompt=prompt,
+                prompt=accented_text,
                 style=style,
                 voice_gender=voice_gender,
                 mode="custom",
-                lyrics=prompt,
+                lyrics=accented_text,
                 instrumental=False,
             )
         else:
-            # Description mode: non-custom, build single prompt
-            # Format: "{gender} vocal, {style}. песня на русском языке. {description}"
-            parts = []
-            if voice_gender:
-                parts.append(f"{voice_gender} vocal")
-            if style:
-                parts.append(style)
-            if config.russian_language_prefix:
-                parts.append("песня на русском языке")
-            parts.append(prompt)
-            api_prompt = ". ".join(parts)
+            # Lyrics were generated (or edited) — use accented version
+            generated_title = data.get("generated_title", prompt[:80])
 
             result = await client.generate(
-                prompt=api_prompt,
-                mode="description",
+                prompt=generated_title,
+                style=style,
+                voice_gender=voice_gender,
+                mode="custom",
+                lyrics=accented_text,
                 instrumental=False,
             )
 
@@ -1279,46 +1503,70 @@ async def cb_regenerate(callback: CallbackQuery, state: FSMContext):
     msg = await callback.message.answer(GENERATING, parse_mode="HTML")
 
     data = await state.get_data()
+
+    # Determine lyrics for accent processing
+    regen_mode = data.get("mode", "description")
+    if regen_mode == "lyrics":
+        regen_lyrics = data.get("prompt", "")
+    else:
+        regen_lyrics = data.get("generated_lyrics") or gen.get("generated_lyrics", "")
+
+    # Apply stress accents
+    accented_text = await asyncio.to_thread(apply_stress_accents, regen_lyrics) if regen_lyrics else regen_lyrics
+    logger.info(f"Accent applied to regen lyrics, length: {len(regen_lyrics)} -> {len(accented_text)}")
+
     gen_id_new = await db.create_generation(
         user_id=user_id,
         prompt=data.get("prompt", ""),
         style=data.get("style", ""),
         voice_gender=data.get("voice_gender"),
-        mode=data.get("mode", "description"),
+        mode=regen_mode,
         user_mode=data.get("user_mode"),
         raw_input=data.get("raw_input"),
+        generated_lyrics=data.get("generated_lyrics") or gen.get("generated_lyrics"),
+        edited_lyrics=data.get("edited_lyrics") or gen.get("edited_lyrics"),
+        generated_title=data.get("generated_title") or gen.get("generated_title"),
+        accented_lyrics=accented_text if regen_lyrics else None,
     )
 
     try:
         client = get_suno_client()
 
-        regen_mode = data.get("mode", "description")
         if regen_mode == "lyrics":
             result = await client.generate(
-                prompt=data.get("prompt", ""),
+                prompt=accented_text,
                 style=data.get("style", ""),
                 voice_gender=data.get("voice_gender"),
                 mode="custom",
-                lyrics=data.get("prompt", ""),
+                lyrics=accented_text,
                 instrumental=False,
             )
         else:
-            # Description mode: non-custom, build single prompt
-            parts = []
-            regen_gender = data.get("voice_gender")
-            regen_style = data.get("style", "")
-            if regen_gender:
-                parts.append(f"{regen_gender} vocal")
-            if regen_style:
-                parts.append(regen_style)
-            if config.russian_language_prefix:
-                parts.append("песня на русском языке")
-            parts.append(data.get("prompt", ""))
-            api_prompt = ". ".join(parts)
+            # Reuse lyrics from previous generation (skip Lyrics API)
+            generated_lyrics = regen_lyrics
+            generated_title = data.get("generated_title") or gen.get("generated_title", data.get("prompt", "")[:80])
+
+            if not generated_lyrics:
+                # Fallback: if no saved lyrics, generate new ones
+                lyrics_prompt_parts = []
+                if config.russian_language_prefix:
+                    lyrics_prompt_parts.append("песня на русском языке")
+                lyrics_prompt_parts.append(data.get("prompt", ""))
+                lyrics_prompt = ". ".join(lyrics_prompt_parts)
+
+                lyrics_result = await client.generate_lyrics(lyrics_prompt)
+                lyrics_data = await client.wait_for_lyrics(lyrics_result["task_id"])
+                generated_lyrics = lyrics_data["text"]
+                generated_title = lyrics_data["title"]
+                # Apply accents to newly generated lyrics
+                accented_text = await asyncio.to_thread(apply_stress_accents, generated_lyrics)
 
             result = await client.generate(
-                prompt=api_prompt,
-                mode="description",
+                prompt=generated_title,
+                style=data.get("style", ""),
+                voice_gender=data.get("voice_gender"),
+                mode="custom",
+                lyrics=accented_text,
                 instrumental=False,
             )
 
