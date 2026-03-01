@@ -1043,26 +1043,22 @@ async def user_detail(request: web.Request):
     for g in data["generations"]:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
         prompt_text = g.get("prompt") or ""
-        full_text = _full_prompt(g)
-        prompt_short = (prompt_text[:80] + "...") if len(prompt_text) > 80 else prompt_text
-        truncated_badge = ' <span style="color:#f59e0b;" title="Текст был обрезан">✂️</span>' if _was_truncated(g) else ""
+        prompt_short = (prompt_text[:60] + "...") if len(prompt_text) > 60 else prompt_text
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         error_text = g.get("error_message") or ""
         error_html = f'<div style="color:#f87171;font-size:12px;margin-top:4px;">❌ {error_text}</div>' if error_text else ""
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
 
-        # Lyrics display — modal with full generation info
-        lyrics_html = _build_modal_html(g)
+        # Combined details modal button
+        details_html = _build_modal_html(g)
+        if details_html == "\u2014":
+            details_html = f'<span style="color:#6b7280">{prompt_short or "\u2014"}</span>'
 
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
             <td>{_mode_label(g)}</td>
-            <td class="prompt-cell" onclick="togglePrompt(this)">
-                <div class="prompt-short">{prompt_short}{truncated_badge}</div>
-                <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
-            </td>
-            <td>{lyrics_html}</td>
+            <td>{details_html}</td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
@@ -1151,8 +1147,7 @@ async def user_detail(request: web.Request):
             <tr>
                 <th>#</th>
                 <th>Режим</th>
-                <th>Промпт (клик для раскрытия)</th>
-                <th>Текст ИИ</th>
+                <th>Детали</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
@@ -1163,7 +1158,7 @@ async def user_detail(request: web.Request):
             </tr>
         </thead>
         <tbody>
-            {gen_rows if gen_rows else '<tr><td colspan="11" class="empty">Нет генераций</td></tr>'}
+            {gen_rows if gen_rows else '<tr><td colspan="10" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
 
@@ -1246,9 +1241,7 @@ async def generations_list(request: web.Request):
     for g in gens:
         status_class = "badge-ok" if g["status"] == "complete" else ("badge-err" if g["status"] == "error" else "badge-info")
         prompt_text = g.get("prompt") or ""
-        full_text = _full_prompt(g)
-        prompt_short = (prompt_text[:60] + "...") if len(prompt_text) > 60 else prompt_text
-        truncated_badge = ' <span style="color:#f59e0b;" title="Текст был обрезан">✂️</span>' if _was_truncated(g) else ""
+        prompt_short = (prompt_text[:50] + "...") if len(prompt_text) > 50 else prompt_text
         user_label = f"@{g['username']}" if g.get("username") else str(g["user_id"])
         rating_display = f'⭐{g["rating"]}' if g.get("rating") else "—"
         error_text = g.get("error_message") or ""
@@ -1256,18 +1249,16 @@ async def generations_list(request: web.Request):
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
 
-        # Lyrics display — modal with full generation info
-        lyrics_html = _build_modal_html(g)
+        # Combined details modal button
+        details_html = _build_modal_html(g)
+        if details_html == "\u2014":
+            details_html = f'<span style="color:#6b7280">{prompt_short or "\u2014"}</span>'
 
         rows += f"""<tr>
             <td>{g['id']}</td>
             <td><a class="link" href="/admin/user/{g['user_id']}?{tp}">{user_label}</a></td>
             <td>{_mode_label(g)}</td>
-            <td class="prompt-cell" onclick="togglePrompt(this)">
-                <div class="prompt-short">{prompt_short}{truncated_badge}</div>
-                <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
-            </td>
-            <td>{lyrics_html}</td>
+            <td>{details_html}</td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
@@ -1291,8 +1282,7 @@ async def generations_list(request: web.Request):
                 <th>#</th>
                 <th>Пользователь</th>
                 <th>Режим</th>
-                <th>Промпт (клик)</th>
-                <th>Текст ИИ</th>
+                <th>Детали</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
@@ -1303,7 +1293,7 @@ async def generations_list(request: web.Request):
             </tr>
         </thead>
         <tbody>
-            {rows if rows else '<tr><td colspan="12" class="empty">Нет генераций</td></tr>'}
+            {rows if rows else '<tr><td colspan="11" class="empty">Нет генераций</td></tr>'}
         </tbody>
     </table>
     <div class="pagination">{pagination}</div>
