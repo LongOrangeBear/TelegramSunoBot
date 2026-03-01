@@ -328,6 +328,123 @@ def base_html(title: str, content: str, token: str) -> str:
             font-weight: 600;
             margin-left: 8px;
         }}
+        /* ─── Lyrics modal ─── */
+        .lyrics-modal-overlay {{
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(6px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }}
+        .lyrics-modal-overlay.open {{ display: flex; }}
+        .lyrics-modal {{
+            background: linear-gradient(145deg, #1e1e3f 0%, #16162e 100%);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 16px;
+            padding: 0;
+            width: 90%;
+            max-width: 700px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            animation: modalIn 0.2s ease-out;
+        }}
+        @keyframes modalIn {{
+            from {{ transform: scale(0.95); opacity: 0; }}
+            to {{ transform: scale(1); opacity: 1; }}
+        }}
+        .lyrics-modal-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 18px 24px;
+            border-bottom: 1px solid rgba(139, 92, 246, 0.15);
+        }}
+        .lyrics-modal-header h3 {{
+            font-size: 18px;
+            color: #a78bfa;
+            font-weight: 700;
+        }}
+        .lyrics-modal-close {{
+            background: none;
+            border: none;
+            color: #6b7280;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }}
+        .lyrics-modal-close:hover {{ color: #f87171; background: rgba(239,68,68,0.1); }}
+        .lyrics-modal-body {{
+            padding: 20px 24px;
+            overflow-y: auto;
+            flex: 1;
+        }}
+        .lyrics-section {{
+            margin-bottom: 20px;
+        }}
+        .lyrics-section:last-child {{ margin-bottom: 0; }}
+        .lyrics-section-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }}
+        .lyrics-section-title {{
+            font-size: 14px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .lyrics-copy-btn {{
+            background: rgba(139, 92, 246, 0.15);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            color: #a78bfa;
+            border-radius: 8px;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .lyrics-copy-btn:hover {{ background: rgba(139, 92, 246, 0.3); }}
+        .lyrics-copy-btn.copied {{
+            background: rgba(34, 197, 94, 0.2);
+            border-color: rgba(34, 197, 94, 0.4);
+            color: #4ade80;
+        }}
+        .lyrics-text-block {{
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: rgba(0,0,0,0.25);
+            padding: 14px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+            border: 1px solid rgba(139, 92, 246, 0.08);
+        }}
+        .lyrics-text-block.edited {{ color: #facc15; }}
+        .lyrics-text-block.accented {{ color: #4ade80; }}
+        .lyrics-cell-btn {{
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            text-align: left;
+            padding: 0;
+            font: inherit;
+            width: 100%;
+        }}
+        .lyrics-cell-btn:hover {{ color: #a78bfa; }}
         @media (max-width: 768px) {{
             nav {{ padding: 12px 16px; gap: 12px; }}
             .container {{ padding: 16px 12px; }}
@@ -336,12 +453,55 @@ def base_html(title: str, content: str, token: str) -> str:
             .stat-card .value {{ font-size: 24px; }}
             table {{ font-size: 13px; }}
             thead th, tbody td {{ padding: 8px 10px; }}
+            .lyrics-modal {{ width: 95%; max-height: 90vh; }}
+            .lyrics-modal-body {{ padding: 16px; }}
         }}
     </style>
     <script>
         function togglePrompt(el) {{
             el.classList.toggle('expanded');
         }}
+        function openLyricsModal(el) {{
+            var container = el.closest('td');
+            var sections = container.querySelectorAll('.lyrics-data');
+            var body = document.getElementById('lyricsModalBody');
+            body.innerHTML = '';
+            sections.forEach(function(sec) {{
+                var label = sec.getAttribute('data-label');
+                var cls = sec.getAttribute('data-class') || '';
+                var text = sec.textContent;
+                var id = 'lyr_' + Math.random().toString(36).substr(2, 9);
+                var html = '<div class="lyrics-section">' +
+                    '<div class="lyrics-section-header">' +
+                        '<span class="lyrics-section-title">' + label + '</span>' +
+                        '<button class="lyrics-copy-btn" onclick="copyLyrics(this, \'' + id + '\')">' +
+                            '📋 Копировать</button>' +
+                    '</div>' +
+                    '<div class="lyrics-text-block ' + cls + '" id="' + id + '">' +
+                        text.replace(/</g, '&lt;').replace(/>/g, '&gt;') +
+                    '</div></div>';
+                body.insertAdjacentHTML('beforeend', html);
+            }});
+            document.getElementById('lyricsModalOverlay').classList.add('open');
+        }}
+        function closeLyricsModal() {{
+            document.getElementById('lyricsModalOverlay').classList.remove('open');
+        }}
+        function copyLyrics(btn, id) {{
+            var el = document.getElementById(id);
+            var text = el.textContent;
+            navigator.clipboard.writeText(text).then(function() {{
+                btn.innerHTML = '✅ Скопировано';
+                btn.classList.add('copied');
+                setTimeout(function() {{
+                    btn.innerHTML = '📋 Копировать';
+                    btn.classList.remove('copied');
+                }}, 2000);
+            }});
+        }}
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') closeLyricsModal();
+        }});
     </script>
 </head>
 <body>
@@ -354,6 +514,16 @@ def base_html(title: str, content: str, token: str) -> str:
     </nav>
     <div class="container">
         {content}
+    </div>
+    <!-- Lyrics modal -->
+    <div class="lyrics-modal-overlay" id="lyricsModalOverlay" onclick="if(event.target===this)closeLyricsModal()">
+        <div class="lyrics-modal">
+            <div class="lyrics-modal-header">
+                <h3>📝 Текст песни</h3>
+                <button class="lyrics-modal-close" onclick="closeLyricsModal()">&times;</button>
+            </div>
+            <div class="lyrics-modal-body" id="lyricsModalBody"></div>
+        </div>
     </div>
 </body>
 </html>"""
@@ -749,20 +919,20 @@ async def user_detail(request: web.Request):
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
 
-        # Lyrics display
+        # Lyrics display — modal
         gen_lyrics = g.get("generated_lyrics") or ""
         edited_lyrics = g.get("edited_lyrics") or ""
         accented_lyrics = g.get("accented_lyrics") or ""
-        lyrics_html = "—"
         if gen_lyrics:
             lyrics_short = (gen_lyrics[:60] + "...") if len(gen_lyrics) > 60 else gen_lyrics
-            lyrics_html = f'<div class="prompt-short">📝 {lyrics_short}</div><div class="prompt-full" style="white-space:pre-wrap;">{gen_lyrics}</div>'
+            lyrics_data = f'<div class="lyrics-data" data-label="📝 Сгенерированный" data-class="" style="display:none">{gen_lyrics}</div>'
             if edited_lyrics:
-                edited_short = (edited_lyrics[:60] + "...") if len(edited_lyrics) > 60 else edited_lyrics
-                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">✏️ {edited_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#facc15;">{edited_lyrics}</div>'
+                lyrics_data += f'<div class="lyrics-data" data-label="✏️ Отредактированный" data-class="edited" style="display:none">{edited_lyrics}</div>'
             if accented_lyrics:
-                accented_short = (accented_lyrics[:60] + "...") if len(accented_lyrics) > 60 else accented_lyrics
-                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">🔤 {accented_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#4ade80;">{accented_lyrics}</div>'
+                lyrics_data += f'<div class="lyrics-data" data-label="🔤 С ударениями" data-class="accented" style="display:none">{accented_lyrics}</div>'
+            lyrics_html = f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">📝 {lyrics_short}</button>{lyrics_data}'
+        else:
+            lyrics_html = "—"
 
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
@@ -771,7 +941,7 @@ async def user_detail(request: web.Request):
                 <div class="prompt-short">{prompt_short}{truncated_badge}</div>
                 <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
             </td>
-            <td class="prompt-cell" onclick="togglePrompt(this)">{lyrics_html}</td>
+            <td>{lyrics_html}</td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
@@ -861,7 +1031,7 @@ async def user_detail(request: web.Request):
                 <th>#</th>
                 <th>Режим</th>
                 <th>Промпт (клик для раскрытия)</th>
-                <th>Текст ИИ (клик)</th>
+                <th>Текст ИИ</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
@@ -965,20 +1135,20 @@ async def generations_list(request: web.Request):
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
 
-        # Lyrics display
+        # Lyrics display — modal
         gen_lyrics = g.get("generated_lyrics") or ""
         edited_lyrics = g.get("edited_lyrics") or ""
         accented_lyrics = g.get("accented_lyrics") or ""
-        lyrics_html = "—"
         if gen_lyrics:
             lyrics_short = (gen_lyrics[:40] + "...") if len(gen_lyrics) > 40 else gen_lyrics
-            lyrics_html = f'<div class="prompt-short">📝 {lyrics_short}</div><div class="prompt-full" style="white-space:pre-wrap;">{gen_lyrics}</div>'
+            lyrics_data = f'<div class="lyrics-data" data-label="📝 Сгенерированный" data-class="" style="display:none">{gen_lyrics}</div>'
             if edited_lyrics:
-                edited_short = (edited_lyrics[:40] + "...") if len(edited_lyrics) > 40 else edited_lyrics
-                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">✏️ {edited_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#facc15;">{edited_lyrics}</div>'
+                lyrics_data += f'<div class="lyrics-data" data-label="✏️ Отредактированный" data-class="edited" style="display:none">{edited_lyrics}</div>'
             if accented_lyrics:
-                accented_short = (accented_lyrics[:40] + "...") if len(accented_lyrics) > 40 else accented_lyrics
-                lyrics_html += f'<div class="prompt-short" style="margin-top:4px;">🔤 {accented_short}</div><div class="prompt-full" style="white-space:pre-wrap;color:#4ade80;">{accented_lyrics}</div>'
+                lyrics_data += f'<div class="lyrics-data" data-label="🔤 С ударениями" data-class="accented" style="display:none">{accented_lyrics}</div>'
+            lyrics_html = f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">📝 {lyrics_short}</button>{lyrics_data}'
+        else:
+            lyrics_html = "—"
 
         rows += f"""<tr>
             <td>{g['id']}</td>
@@ -988,7 +1158,7 @@ async def generations_list(request: web.Request):
                 <div class="prompt-short">{prompt_short}{truncated_badge}</div>
                 <div class="prompt-full" style="white-space:pre-wrap;">{full_text}</div>
             </td>
-            <td class="prompt-cell" onclick="togglePrompt(this)">{lyrics_html}</td>
+            <td>{lyrics_html}</td>
             <td>{g.get('style', '—')}</td>
             <td>{g.get('voice_gender', '—')}</td>
             <td><span class="badge {status_class}">{g['status']}</span>{error_html}</td>
@@ -1013,7 +1183,7 @@ async def generations_list(request: web.Request):
                 <th>Пользователь</th>
                 <th>Режим</th>
                 <th>Промпт (клик)</th>
-                <th>Текст ИИ (клик)</th>
+                <th>Текст ИИ</th>
                 <th>Стиль</th>
                 <th>Голос</th>
                 <th>Статус</th>
