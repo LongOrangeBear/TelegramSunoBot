@@ -604,7 +604,7 @@ def base_html(title: str, content: str, token: str) -> str:
                 var html = '<div class="lyrics-section">' +
                     '<div class="lyrics-section-header">' +
                         '<span class="lyrics-section-title">' + label + '</span>' +
-                        '<button class="lyrics-copy-btn" onclick="copyLyrics(this, \'' + id + '\')">' +
+                        '<button class="lyrics-copy-btn" data-target="' + id + '" onclick="copyLyrics(this)">'+
                             '📋 Копировать</button>' +
                     '</div>' +
                     '<div class="lyrics-text-block ' + cls + '" id="' + id + '">' +
@@ -617,7 +617,8 @@ def base_html(title: str, content: str, token: str) -> str:
         function closeLyricsModal() {{
             document.getElementById('lyricsModalOverlay').classList.remove('open');
         }}
-        function copyLyrics(btn, id) {{
+        function copyLyrics(btn) {{
+            var id = btn.getAttribute('data-target');
             var el = document.getElementById(id);
             var text = el.textContent;
             navigator.clipboard.writeText(text).then(function() {{
