@@ -641,8 +641,19 @@ async def do_generate_lyrics(message: Message, state: FSMContext, user_id: int |
         lyrics_prompt_parts.append("песня на русском языке")
     lyrics_prompt_parts.append(prompt)
     lyrics_prompt = ". ".join(lyrics_prompt_parts)
+
     # Lyrics API has a 200 character limit on prompt
-    lyrics_prompt = lyrics_prompt[:200]
+    original_lyrics_prompt = lyrics_prompt
+    if len(lyrics_prompt) > 200:
+        from app.gpt_compress import compress_prompt
+        compressed = await compress_prompt(lyrics_prompt, limit=200)
+        if compressed:
+            lyrics_prompt = compressed
+            logger.info(f"Prompt compressed by GPT: {len(original_lyrics_prompt)} -> {len(lyrics_prompt)}")
+        else:
+            lyrics_prompt = lyrics_prompt[:200]
+            logger.info(f"GPT compression failed, truncated to 200 chars")
+    await state.update_data(lyrics_prompt_sent=lyrics_prompt, lyrics_prompt_original=original_lyrics_prompt)
 
     try:
         client = get_suno_client()
@@ -864,6 +875,21 @@ async def do_generate_music(message: Message, state: FSMContext, user_id: int | 
     accented_text = await asyncio.to_thread(apply_stress_accents, lyrics_for_suno)
     logger.info(f"Accent applied to lyrics, length: {len(lyrics_for_suno)} -> {len(accented_text)}")
 
+    # Enrich raw_input with lyrics prompt before/after GPT compression
+    raw_input_str = data.get("raw_input")
+    lyrics_prompt_original = data.get("lyrics_prompt_original")
+    lyrics_prompt_sent = data.get("lyrics_prompt_sent")
+    if lyrics_prompt_original and lyrics_prompt_sent:
+        try:
+            raw_data = json.loads(raw_input_str) if raw_input_str else {}
+        except (json.JSONDecodeError, TypeError):
+            raw_data = {}
+        raw_data["lyrics_prompt_original"] = lyrics_prompt_original
+        raw_data["lyrics_prompt_sent"] = lyrics_prompt_sent
+        if lyrics_prompt_original != lyrics_prompt_sent:
+            raw_data["gpt_compressed"] = True
+        raw_input_str = json.dumps(raw_data, ensure_ascii=False)
+
     gen_id = await db.create_generation(
         user_id=user_id,
         prompt=prompt,
@@ -871,7 +897,7 @@ async def do_generate_music(message: Message, state: FSMContext, user_id: int | 
         voice_gender=voice_gender,
         mode=mode,
         user_mode=data.get("user_mode"),
-        raw_input=data.get("raw_input"),
+        raw_input=raw_input_str,
         generated_lyrics=data.get("_original_lyrics") or original_lyrics,
         edited_lyrics=edited_lyrics_text,
         generated_title=generated_title,

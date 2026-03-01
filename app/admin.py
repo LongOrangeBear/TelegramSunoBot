@@ -90,6 +90,86 @@ def _was_truncated(g: dict) -> bool:
     return len(full) > len(prompt)
 
 
+def _build_modal_html(g: dict) -> str:
+    """Build hidden data divs for the generation detail modal."""
+    import html as html_mod
+    gen_lyrics = g.get("generated_lyrics") or ""
+    edited_lyrics = g.get("edited_lyrics") or ""
+    accented_lyrics = g.get("accented_lyrics") or ""
+
+    if not gen_lyrics:
+        return "\u2014"
+
+    lyrics_short = (gen_lyrics[:60] + "...") if len(gen_lyrics) > 60 else gen_lyrics
+
+    # Build generation info fields
+    mode_label = _mode_label(g)
+    prompt_text = g.get("prompt") or "\u2014"
+    style_text = g.get("style") or "\u2014"
+    voice_text = g.get("voice_gender") or "\u2014"
+    title_text = g.get("generated_title") or "\u2014"
+
+    # Parse raw_input for original user inputs and GPT compression info
+    raw_input_html = ""
+    gpt_prompt_original = ""
+    gpt_prompt_sent = ""
+    was_gpt_compressed = False
+    raw = g.get("raw_input")
+    if raw:
+        try:
+            raw_data = json.loads(raw)
+            # Extract GPT compression data
+            gpt_prompt_original = raw_data.pop("lyrics_prompt_original", "")
+            gpt_prompt_sent = raw_data.pop("lyrics_prompt_sent", "")
+            was_gpt_compressed = raw_data.pop("gpt_compressed", False)
+
+            raw_parts = []
+            field_labels = {
+                "text": "\u0422\u0435\u043a\u0441\u0442",
+                "recipient": "\u041a\u043e\u043c\u0443",
+                "name": "\u0418\u043c\u044f",
+                "occasion": "\u041f\u043e\u0432\u043e\u0434",
+                "mood": "\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043d\u0438\u0435",
+                "details": "\u0414\u0435\u0442\u0430\u043b\u0438",
+                "vibe": "\u0412\u0430\u0439\u0431",
+                "context": "\u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442",
+                "style_raw": "\u0421\u0442\u0438\u043b\u044c (\u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b)",
+            }
+            for key, val in raw_data.items():
+                if val:
+                    label = field_labels.get(key, key)
+                    raw_parts.append(f'{label}: {html_mod.escape(str(val))}')
+            if raw_parts:
+                raw_input_html = '\\n'.join(raw_parts)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Hidden info divs
+    info_html = (
+        f'<div class="modal-info" data-key="\u0420\u0435\u0436\u0438\u043c" style="display:none">{html_mod.escape(mode_label)}</div>'
+        f'<div class="modal-info" data-key="\u041f\u0440\u043e\u043c\u043f\u0442 (\u0441\u043e\u0431\u0440\u0430\u043d\u043d\u044b\u0439)" style="display:none">{html_mod.escape(prompt_text)}</div>'
+        f'<div class="modal-info" data-key="\u0421\u0442\u0438\u043b\u044c" style="display:none">{html_mod.escape(style_text)}</div>'
+        f'<div class="modal-info" data-key="\u0413\u043e\u043b\u043e\u0441" style="display:none">{html_mod.escape(voice_text)}</div>'
+        f'<div class="modal-info" data-key="\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a \u0418\u0418" style="display:none">{html_mod.escape(title_text)}</div>'
+    )
+    if raw_input_html:
+        info_html += f'<div class="modal-info" data-key="\u0412\u0432\u043e\u0434 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f" style="display:none">{raw_input_html}</div>'
+    if gpt_prompt_original:
+        info_html += f'<div class="modal-info" data-key="\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u0434\u043e)" style="display:none">{html_mod.escape(gpt_prompt_original)}</div>'
+    if gpt_prompt_sent:
+        label = "\ud83e\udd16 \u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u043f\u043e\u0441\u043b\u0435 GPT)" if was_gpt_compressed else "\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API"
+        info_html += f'<div class="modal-info" data-key="{label}" style="display:none">{html_mod.escape(gpt_prompt_sent)}</div>'
+
+    # Lyrics data divs
+    lyrics_data = f'<div class="lyrics-data" data-label="\ud83d\udcdd \u0421\u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="" style="display:none">{html_mod.escape(gen_lyrics)}</div>'
+    if edited_lyrics:
+        lyrics_data += f'<div class="lyrics-data" data-label="\u270f\ufe0f \u041e\u0442\u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="edited" style="display:none">{html_mod.escape(edited_lyrics)}</div>'
+    if accented_lyrics:
+        lyrics_data += f'<div class="lyrics-data" data-label="\ud83d\udd24 \u0421 \u0443\u0434\u0430\u0440\u0435\u043d\u0438\u044f\u043c\u0438" data-class="accented" style="display:none">{html_mod.escape(accented_lyrics)}</div>'
+
+    return f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">\ud83d\udcdd {html_mod.escape(lyrics_short)}</button>{info_html}{lyrics_data}'
+
+
 # ─── HTML Templates ───
 
 def base_html(title: str, content: str, token: str) -> str:
@@ -445,6 +525,32 @@ def base_html(title: str, content: str, token: str) -> str:
             width: 100%;
         }}
         .lyrics-cell-btn:hover {{ color: #a78bfa; }}
+        .modal-info-grid {{
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 6px 12px;
+            margin-bottom: 20px;
+            padding: 14px 16px;
+            background: rgba(0,0,0,0.25);
+            border-radius: 10px;
+            border: 1px solid rgba(139, 92, 246, 0.08);
+            font-size: 13px;
+        }}
+        .modal-info-key {{
+            color: #6b7280;
+            font-weight: 600;
+            white-space: nowrap;
+        }}
+        .modal-info-val {{
+            color: #e0e0e0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }}
+        .modal-divider {{
+            border: none;
+            border-top: 1px solid rgba(139, 92, 246, 0.12);
+            margin: 16px 0;
+        }}
         @media (max-width: 768px) {{
             nav {{ padding: 12px 16px; gap: 12px; }}
             .container {{ padding: 16px 12px; }}
@@ -463,9 +569,25 @@ def base_html(title: str, content: str, token: str) -> str:
         }}
         function openLyricsModal(el) {{
             var container = el.closest('td');
-            var sections = container.querySelectorAll('.lyrics-data');
             var body = document.getElementById('lyricsModalBody');
             body.innerHTML = '';
+
+            // Render info fields
+            var infos = container.querySelectorAll('.modal-info');
+            if (infos.length > 0) {{
+                var grid = '<div class="modal-info-grid">';
+                infos.forEach(function(info) {{
+                    var key = info.getAttribute('data-key');
+                    var val = info.textContent;
+                    grid += '<div class="modal-info-key">' + key + '</div>';
+                    grid += '<div class="modal-info-val">' + val.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+                }});
+                grid += '</div>';
+                body.insertAdjacentHTML('beforeend', grid);
+            }}
+
+            // Render lyrics sections
+            var sections = container.querySelectorAll('.lyrics-data');
             sections.forEach(function(sec) {{
                 var label = sec.getAttribute('data-label');
                 var cls = sec.getAttribute('data-class') || '';
@@ -919,20 +1041,8 @@ async def user_detail(request: web.Request):
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
 
-        # Lyrics display — modal
-        gen_lyrics = g.get("generated_lyrics") or ""
-        edited_lyrics = g.get("edited_lyrics") or ""
-        accented_lyrics = g.get("accented_lyrics") or ""
-        if gen_lyrics:
-            lyrics_short = (gen_lyrics[:60] + "...") if len(gen_lyrics) > 60 else gen_lyrics
-            lyrics_data = f'<div class="lyrics-data" data-label="📝 Сгенерированный" data-class="" style="display:none">{gen_lyrics}</div>'
-            if edited_lyrics:
-                lyrics_data += f'<div class="lyrics-data" data-label="✏️ Отредактированный" data-class="edited" style="display:none">{edited_lyrics}</div>'
-            if accented_lyrics:
-                lyrics_data += f'<div class="lyrics-data" data-label="🔤 С ударениями" data-class="accented" style="display:none">{accented_lyrics}</div>'
-            lyrics_html = f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">📝 {lyrics_short}</button>{lyrics_data}'
-        else:
-            lyrics_html = "—"
+        # Lyrics display — modal with full generation info
+        lyrics_html = _build_modal_html(g)
 
         gen_rows += f"""<tr>
             <td>{g['id']}</td>
@@ -1135,20 +1245,8 @@ async def generations_list(request: web.Request):
         comment_text = g.get("user_comment") or ""
         comment_html = f'<div style="color:#60a5fa;font-size:12px;margin-top:4px;">💬 {comment_text[:100]}{"..." if len(comment_text) > 100 else ""}</div>' if comment_text else ""
 
-        # Lyrics display — modal
-        gen_lyrics = g.get("generated_lyrics") or ""
-        edited_lyrics = g.get("edited_lyrics") or ""
-        accented_lyrics = g.get("accented_lyrics") or ""
-        if gen_lyrics:
-            lyrics_short = (gen_lyrics[:40] + "...") if len(gen_lyrics) > 40 else gen_lyrics
-            lyrics_data = f'<div class="lyrics-data" data-label="📝 Сгенерированный" data-class="" style="display:none">{gen_lyrics}</div>'
-            if edited_lyrics:
-                lyrics_data += f'<div class="lyrics-data" data-label="✏️ Отредактированный" data-class="edited" style="display:none">{edited_lyrics}</div>'
-            if accented_lyrics:
-                lyrics_data += f'<div class="lyrics-data" data-label="🔤 С ударениями" data-class="accented" style="display:none">{accented_lyrics}</div>'
-            lyrics_html = f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">📝 {lyrics_short}</button>{lyrics_data}'
-        else:
-            lyrics_html = "—"
+        # Lyrics display — modal with full generation info
+        lyrics_html = _build_modal_html(g)
 
         rows += f"""<tr>
             <td>{g['id']}</td>

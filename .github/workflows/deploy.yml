@@ -57,6 +57,7 @@ jobs:
             MIN_TELEGRAM_USER_ID=0
             ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}
             ADMIN_PORT=8080
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             ENVEOF
               sed -i 's/^[[:space:]]*//' .env
             fi
@@ -67,6 +68,10 @@ jobs:
             sed -i "s|^SUNO_API_KEY=.*|SUNO_API_KEY=${{ secrets.SUNO_API_KEY }}|" .env
             sed -i "s|^SUNOAPI_ORG_API_KEY=.*|SUNOAPI_ORG_API_KEY=${{ secrets.SUNOAPI_ORG_API_KEY }}|" .env
             sed -i "s|^ADMIN_TOKEN=.*|ADMIN_TOKEN=${{ secrets.ADMIN_TOKEN }}|" .env
+
+            # Add OPENAI_API_KEY if not present, then update
+            grep -q '^OPENAI_API_KEY=' .env || echo 'OPENAI_API_KEY=' >> .env
+            sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}|" .env
 
             # Restart service
             systemctl restart telegram-suno-bot

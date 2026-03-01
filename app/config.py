@@ -97,6 +97,9 @@ class Config:
     tbank_password: str = os.getenv("TBANK_PASSWORD", "")
     tbank_enabled: bool = False  # set in __post_init__
 
+    # OpenAI (GPT) — for compressing long prompts
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+
     # Credit packages: (credits, stars_price)
     credit_packages: list = None
     credit_packages_rub: list = None
