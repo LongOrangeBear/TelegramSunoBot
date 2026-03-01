@@ -289,8 +289,8 @@ async def on_prompt(message: Message, state: FSMContext):
         "style_raw": data.get("style_raw", data.get("style", "")),
     }, ensure_ascii=False)
 
-    # For description mode, limit to 400 chars
-    text = full_text[:400] if mode != "lyrics" else full_text
+    # No truncation — GPT compression handles the 200-char lyrics API limit
+    text = full_text
 
     await state.update_data(prompt=text, user_mode=mode, raw_input=raw_input)
     await do_generate(message, state)
@@ -410,7 +410,7 @@ async def cb_greeting_mood(callback: CallbackQuery, state: FSMContext):
 @router.message(GenerationStates.greeting_details)
 async def on_greeting_details(message: Message, state: FSMContext):
     full_details = message.text.strip()
-    details = full_details[:300]
+    details = full_details
     await state.update_data(gr_details=details)
 
     # Assemble the greeting prompt
@@ -420,19 +420,17 @@ async def on_greeting_details(message: Message, state: FSMContext):
     occasion = data.get("gr_occasion", "")
     mood = data.get("gr_mood", "")
 
-    prompt_parts = [f"Поздравительная песня для {recipient}"]
+    # Natural format for Suno — no "Повод:", "Настроение:" labels
+    prompt_parts = [f"поздравление для {recipient}"]
     if name:
-        prompt_parts.append(f"Имя: {name}")
+        prompt_parts[0] = f"поздравление {recipient} {name}"
     if occasion:
-        prompt_parts.append(f"Повод: {occasion}")
+        prompt_parts.append(f"с {occasion}" if not occasion.startswith("с ") else occasion)
     if mood:
-        prompt_parts.append(f"Настроение: {mood}")
+        prompt_parts.append(mood)
+    assembled = ", ".join(prompt_parts)
     if details:
-        prompt_parts.append(f"Детали: {details}")
-
-    assembled = ". ".join(prompt_parts)
-    # Limit to 400 chars for description mode
-    assembled = assembled[:400]
+        assembled += f". {details}"
 
     # Preserve original mode and raw wizard inputs (full text before truncation)
     raw_input = json.dumps({
@@ -565,18 +563,18 @@ async def _assemble_stories_prompt(message: Message, state: FSMContext, user_id:
     context = data.get("st_context", "")
     name = data.get("st_name", "")
 
-    prompt_parts = ["Короткая песня для сторис, один куплет и припев, от первого лица"]
+    # Natural format for Suno — concise, no labels
+    prompt_parts = ["короткая песня для сторис, один куплет и припев, от первого лица"]
     if vibe:
-        prompt_parts.append(f"Вайб: {vibe}")
+        prompt_parts.append(vibe)
     if mood:
-        prompt_parts.append(f"Атмосфера: {mood}")
+        prompt_parts.append(mood)
     if context:
-        prompt_parts.append(f"Контекст: {context}")
+        prompt_parts.append(context)
     if name:
-        prompt_parts.append(f"Имя: {name}")
+        prompt_parts.append(f"имя: {name}")
 
-    assembled = ". ".join(prompt_parts)
-    assembled = assembled[:400]
+    assembled = ", ".join(prompt_parts)
 
     # Preserve original mode and raw wizard inputs (full text before truncation)
     raw_input = json.dumps({
