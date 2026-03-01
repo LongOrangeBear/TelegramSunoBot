@@ -12,6 +12,11 @@ class GenerationStates(StatesGroup):
     entering_custom_style = State() # Type custom style
     generating = State()            # Waiting for Suno API
 
+    # Lyrics preview states (for always-custom mode)
+    generating_lyrics = State()     # Waiting for Lyrics API
+    reviewing_lyrics = State()      # User sees generated lyrics, picks approve/edit
+    editing_lyrics = State()        # User is editing lyrics text
+
     # Greeting wizard states
     greeting_recipient = State()    # Pick: кому (маме, папе, ...)
     greeting_name = State()         # Enter name / full name

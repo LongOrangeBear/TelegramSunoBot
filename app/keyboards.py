@@ -259,6 +259,28 @@ def stories_name_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+# ─── Lyrics preview keyboard ───
+
+def lyrics_review_kb() -> InlineKeyboardMarkup:
+    """Keyboard for lyrics preview: approve or edit."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Продолжить", callback_data="lyrics:approve"),
+        InlineKeyboardButton(text="✏️ Изменить текст", callback_data="lyrics:edit"),
+    )
+    return builder.as_markup()
+
+
+def lyrics_confirm_kb() -> InlineKeyboardMarkup:
+    """Keyboard for confirming edited lyrics despite warnings."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Да, продолжить", callback_data="lyrics:confirm_edited"),
+        InlineKeyboardButton(text="✏️ Исправить", callback_data="lyrics:re_edit"),
+    )
+    return builder.as_markup()
+
+
 # ─── Balance / Buy page ───
 
 def balance_kb() -> InlineKeyboardMarkup:

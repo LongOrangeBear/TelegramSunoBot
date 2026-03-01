@@ -168,6 +168,10 @@ class SunoClient:
                 "style": (full_style or "Pop")[:1000],
                 "title": (prompt[:77] + "..." if len(prompt) > 80 else prompt) if prompt else "Untitled",
             }
+            # Pass vocalGender as a separate API param (m/f)
+            if voice_gender:
+                gender_code = "f" if "female" in voice_gender.lower() else "m"
+                payload["vocalGender"] = gender_code
         elif mode == "instrumental":
             # Instrumental: customMode=false, instrumental=true
             payload = {
@@ -218,6 +222,34 @@ class SunoClient:
             raise SunoApiError(f"API error {e.response.status_code}: {error_body}")
         except httpx.RequestError as e:
             raise SunoApiError(f"Request failed: {e}")
+
+    async def generate_with_lyrics(
+        self,
+        description: str,
+        style: str = "",
+        voice_gender: str | None = None,
+    ) -> tuple[dict, dict]:
+        """
+        Two-step generation: first generate lyrics, then generate music in custom mode.
+
+        Returns:
+            tuple of (generate_result, lyrics_data)
+            where lyrics_data = {"text": "...", "title": "..."}
+        """
+        # Step 1: Generate lyrics from description
+        lyrics_result = await self.generate_lyrics(description)
+        lyrics_data = await self.wait_for_lyrics(lyrics_result["task_id"])
+        # lyrics_data = {"text": "[Verse]\n...", "title": "Song Title"}
+
+        # Step 2: Generate music in custom mode with those lyrics
+        gen_result = await self.generate(
+            prompt=lyrics_data["title"],
+            style=style,
+            voice_gender=voice_gender,
+            mode="custom",
+            lyrics=lyrics_data["text"],
+        )
+        return gen_result, lyrics_data
 
     async def get_task_status(self, task_id: str) -> dict:
         """Check task status via polling endpoint."""
