@@ -641,6 +641,8 @@ async def do_generate_lyrics(message: Message, state: FSMContext, user_id: int |
         lyrics_prompt_parts.append("песня на русском языке")
     lyrics_prompt_parts.append(prompt)
     lyrics_prompt = ". ".join(lyrics_prompt_parts)
+    # Lyrics API has a 200 character limit on prompt
+    lyrics_prompt = lyrics_prompt[:200]
 
     try:
         client = get_suno_client()
@@ -659,14 +661,25 @@ async def do_generate_lyrics(message: Message, state: FSMContext, user_id: int |
         if len(lyrics_display) > 3500:
             lyrics_display = lyrics_display[:3500] + "\n..."
 
-        await status_msg.edit_text(
-            LYRICS_PREVIEW.format(
-                lyrics=html_escape(lyrics_display),
-                title=html_escape(lyrics_data["title"]),
-            ),
-            parse_mode="HTML",
-            reply_markup=lyrics_review_kb(),
-        )
+        try:
+            await status_msg.edit_text(
+                LYRICS_PREVIEW.format(
+                    lyrics=html_escape(lyrics_display),
+                    title=html_escape(lyrics_data["title"]),
+                ),
+                parse_mode="HTML",
+                reply_markup=lyrics_review_kb(),
+            )
+        except Exception:
+            # Fallback: if status message can't be edited (deleted, too old, etc.)
+            await message.answer(
+                LYRICS_PREVIEW.format(
+                    lyrics=html_escape(lyrics_display),
+                    title=html_escape(lyrics_data["title"]),
+                ),
+                parse_mode="HTML",
+                reply_markup=lyrics_review_kb(),
+            )
 
     except ContentPolicyError:
         count = await db.increment_content_violations(user_id)
