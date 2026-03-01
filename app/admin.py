@@ -165,17 +165,17 @@ def _build_modal_html(g: dict) -> str:
     if gpt_prompt_original:
         info_html += f'<div class="modal-info" data-key="\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u0434\u043e)" style="display:none">{html_mod.escape(gpt_prompt_original)}</div>'
     if gpt_prompt_sent:
-        label = "\ud83e\udd16 \u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u043f\u043e\u0441\u043b\u0435 GPT)" if was_gpt_compressed else "\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API"
+        label = "🤖 \u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API (\u043f\u043e\u0441\u043b\u0435 GPT)" if was_gpt_compressed else "\u041f\u0440\u043e\u043c\u043f\u0442 \u0434\u043b\u044f Lyrics API"
         info_html += f'<div class="modal-info" data-key="{label}" style="display:none">{html_mod.escape(gpt_prompt_sent)}</div>'
 
     # Lyrics data divs
-    lyrics_data = f'<div class="lyrics-data" data-label="\ud83d\udcdd \u0421\u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="" style="display:none">{html_mod.escape(gen_lyrics)}</div>'
+    lyrics_data = f'<div class="lyrics-data" data-label="📝 \u0421\u0433\u0435\u043d\u0435\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="" style="display:none">{html_mod.escape(gen_lyrics)}</div>'
     if edited_lyrics:
-        lyrics_data += f'<div class="lyrics-data" data-label="\u270f\ufe0f \u041e\u0442\u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="edited" style="display:none">{html_mod.escape(edited_lyrics)}</div>'
+        lyrics_data += f'<div class="lyrics-data" data-label="✏️ \u041e\u0442\u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439" data-class="edited" style="display:none">{html_mod.escape(edited_lyrics)}</div>'
     if accented_lyrics:
-        lyrics_data += f'<div class="lyrics-data" data-label="\ud83d\udd24 \u0421 \u0443\u0434\u0430\u0440\u0435\u043d\u0438\u044f\u043c\u0438" data-class="accented" style="display:none">{html_mod.escape(accented_lyrics)}</div>'
+        lyrics_data += f'<div class="lyrics-data" data-label="🔤 \u0421 \u0443\u0434\u0430\u0440\u0435\u043d\u0438\u044f\u043c\u0438" data-class="accented" style="display:none">{html_mod.escape(accented_lyrics)}</div>'
 
-    return f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">\ud83d\udcdd {html_mod.escape(lyrics_short)}</button>{info_html}{lyrics_data}'
+    return f'<button class="lyrics-cell-btn" onclick="openLyricsModal(this)">📝 {html_mod.escape(lyrics_short)}</button>{info_html}{lyrics_data}'
 
 
 # ─── HTML Templates ───

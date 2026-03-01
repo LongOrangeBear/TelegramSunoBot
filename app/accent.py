@@ -43,7 +43,8 @@ def _accent_line(accentizer, line: str) -> str:
         return line
 
     try:
-        accented = accentizer.process_all(stripped)
+        # Lowercase first so only stress-marked vowels are uppercase in output
+        accented = accentizer.process_all(stripped.lower())
     except Exception as e:
         logger.warning(f"RUAccent processing failed for line: {e}")
         return line
