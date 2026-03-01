@@ -233,7 +233,12 @@ async def _deliver_video(bot, chat_id: int, video_url: str, title: str):
         )
         logger.info(f"Video delivered to chat_id={chat_id}: {title}")
     except Exception as e:
-        logger.error(f"Video delivery failed for chat_id={chat_id}: {e}")
+        err = str(e).lower()
+        if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+            await db.mark_user_blocked(chat_id)
+            logger.info(f"Video delivery: user {chat_id} blocked the bot")
+        else:
+            logger.error(f"Video delivery failed for chat_id={chat_id}: {e}")
 
 
 async def _deliver_result_to_user(
@@ -372,7 +377,12 @@ async def _deliver_result_to_user(
                 logger.warning(f"Callback: video generation error: {e}")
 
     except Exception as e:
-        logger.error(f"Callback: error sending results to user: {e}")
+        err = str(e).lower()
+        if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+            await db.mark_user_blocked(gen["user_id"])
+            logger.info(f"Callback delivery: user {gen['user_id']} blocked the bot")
+        else:
+            logger.error(f"Callback: error sending results to user: {e}")
 
 
 def _humanize_error(error_msg: str) -> str:
@@ -494,4 +504,9 @@ async def _deliver_error_to_user(bot, gen: dict, error_msg: str):
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.error(f"Callback: failed to send error msg to chat {chat_id}: {e}")
+            err = str(e).lower()
+            if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+                await db.mark_user_blocked(gen.get("user_id", 0))
+                logger.info(f"Error delivery: user {gen.get('user_id')} blocked the bot")
+            else:
+                logger.error(f"Callback: failed to send error msg to chat {chat_id}: {e}")

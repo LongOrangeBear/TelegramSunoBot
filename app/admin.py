@@ -755,6 +755,8 @@ async def dashboard(request: web.Request):
         success_html = f'<span class="success-msg">✅ Модель изменена на {config.suno_model}</span>'
     elif success == "daily_limit_set":
         success_html = f'<span class="success-msg">✅ Лимит изменён на {config.max_generations_per_user_per_day}/день</span>'
+    elif success == "hourly_limit_set":
+        success_html = f'<span class="success-msg">✅ Глобальный лимит изменён на {config.max_generations_per_hour}/час</span>'
     elif success == "russian_prefix":
         status = "включен" if config.russian_language_prefix else "выключен"
         success_html = f'<span class="success-msg">✅ Префикс русского языка {status}</span>'
@@ -872,7 +874,16 @@ async def dashboard(request: web.Request):
                 </td>
                 <td>Максимум генераций в день на одного пользователя</td>
             </tr>
-            <tr><td>📊 Лимит/час глобальный</td><td>{config.max_generations_per_hour}</td><td>Максимум генераций в час по всему боту (защита от перегрузки API)</td></tr>
+            <tr>
+                <td>📊 Лимит/час глобальный</td>
+                <td>
+                    <form method="POST" action="/admin/set_hourly_limit?{tp}" class="admin-form">
+                        <input type="number" name="hourly_limit" value="{config.max_generations_per_hour}" min="1" max="1000" class="admin-input">
+                        <button type="submit" class="admin-btn">Сохранить</button>
+                    </form>
+                </td>
+                <td>Максимум генераций в час по всему боту (защита от перегрузки API)</td>
+            </tr>
             <tr>
                 <td>🇷🇺 Песня на русском</td>
                 <td>
@@ -1438,6 +1449,27 @@ async def credit_user(request: web.Request):
                 telegram_id, amount, 'admin', 'Начисление администратором',
             )
             logger.info(f"Admin credited {amount} to user {telegram_id}")
+            # Notify user in bot
+            get_bot = request.app.get("get_bot")
+            if get_bot:
+                bot = get_bot()
+                if bot:
+                    user = await db.get_user(telegram_id)
+                    balance = (user["credits"] + user["free_generations_left"]) if user else amount
+                    try:
+                        await bot.send_message(
+                            telegram_id,
+                            f"🎵 <b>Вам начислено {amount}🎵!</b>\n\n"
+                            f"Ваш баланс: <b>{balance} баллов</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        err = str(e).lower()
+                        if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+                            await db.mark_user_blocked(telegram_id)
+                            logger.info(f"User {telegram_id} blocked the bot (detected on admin credit)")
+                        else:
+                            logger.warning(f"Failed to notify user {telegram_id} about admin credit: {e}")
     except (ValueError, TypeError):
         amount = 0
     raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=credited&amount={amount}")
@@ -1457,6 +1489,27 @@ async def credit_user_free(request: web.Request):
                 telegram_id, amount, 'admin', 'Бесплатные кредиты (превью) от админа',
             )
             logger.info(f"Admin gave {amount} free credits to user {telegram_id}")
+            # Notify user in bot
+            get_bot = request.app.get("get_bot")
+            if get_bot:
+                bot = get_bot()
+                if bot:
+                    user = await db.get_user(telegram_id)
+                    balance = (user["credits"] + user["free_generations_left"]) if user else amount
+                    try:
+                        await bot.send_message(
+                            telegram_id,
+                            f"🎁 <b>Вам начислено {amount} бесплатных генераций!</b>\n\n"
+                            f"Ваш баланс: <b>{balance} баллов</b>",
+                            parse_mode="HTML",
+                        )
+                    except Exception as e:
+                        err = str(e).lower()
+                        if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+                            await db.mark_user_blocked(telegram_id)
+                            logger.info(f"User {telegram_id} blocked the bot (detected on admin free credit)")
+                        else:
+                            logger.warning(f"Failed to notify user {telegram_id} about free credit: {e}")
     except (ValueError, TypeError):
         amount = 0
     raise web.HTTPFound(f"/admin/user/{telegram_id}?{tp}&success=free_credited&amount={amount}")
@@ -1476,6 +1529,22 @@ async def set_daily_limit(request: web.Request):
     except (ValueError, TypeError):
         pass
     raise web.HTTPFound(f"/admin/?{tp}&success=daily_limit_set")
+
+
+@auth_required
+async def set_hourly_limit(request: web.Request):
+    """Change the global hourly generation limit."""
+    tp = token_param(request)
+    data = await request.post()
+    try:
+        new_value = int(data.get("hourly_limit", config.max_generations_per_hour))
+        if 1 <= new_value <= 1000:
+            config.max_generations_per_hour = new_value
+            persist_env_var("MAX_GENERATIONS_PER_HOUR", str(new_value))
+            logger.info(f"Global hourly limit changed to {new_value} via admin panel")
+    except (ValueError, TypeError):
+        pass
+    raise web.HTTPFound(f"/admin/?{tp}&success=hourly_limit_set")
 
 
 @auth_required
@@ -1662,6 +1731,7 @@ def create_admin_app() -> web.Application:
     app.router.add_post("/admin/set_free_credits", set_free_credits)
     app.router.add_post("/admin/set_signup_credits", set_signup_credits)
     app.router.add_post("/admin/set_daily_limit", set_daily_limit)
+    app.router.add_post("/admin/set_hourly_limit", set_hourly_limit)
     app.router.add_post("/admin/toggle_russian_prefix", toggle_russian_prefix)
     app.router.add_post("/admin/toggle_video_generation", toggle_video_generation)
     app.router.add_post("/admin/set_preview_settings", set_preview_settings)

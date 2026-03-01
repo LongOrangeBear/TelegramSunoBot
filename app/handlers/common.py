@@ -5,7 +5,7 @@ from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ChatMemberUpdated
 from aiogram.fsm.context import FSMContext
 
 from app import database as db
@@ -22,6 +22,13 @@ from app.texts import (
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+def is_blocked_error(e: Exception) -> bool:
+    """Check if an exception indicates the user blocked the bot."""
+    err = str(e).lower()
+    return any(kw in err for kw in ("blocked", "deactivated", "not found", "chat not found",
+                                     "user is deactivated", "bot was blocked"))
 
 
 def _build_tariff_lines() -> str:
@@ -84,7 +91,11 @@ async def cmd_start(message: Message, state: FSMContext):
                 )
                 logger.info(f"Referral bonus: +1 credit to {referred_by} from {message.from_user.id}")
         except Exception as e:
-            logger.error(f"Failed to send referral bonus notification: {e}")
+            if is_blocked_error(e):
+                await db.mark_user_blocked(referred_by)
+                logger.info(f"Referral: inviter {referred_by} blocked the bot")
+            else:
+                logger.error(f"Failed to send referral bonus notification: {e}")
 
     if is_new:
         text = WELCOME.format(free=config.free_credits_on_signup)
@@ -257,3 +268,19 @@ async def cb_invite(callback: CallbackQuery):
         disable_web_page_preview=True,
     )
     await callback.answer("📤 Перешлите сообщение ниже друзьям!")
+
+
+# ─── my_chat_member — instant block/unblock detection ───
+
+@router.my_chat_member()
+async def on_my_chat_member(update: ChatMemberUpdated):
+    """Detect when a user blocks or unblocks the bot."""
+    new_status = update.new_chat_member.status
+    user_id = update.from_user.id
+
+    if new_status in ("kicked", "left"):
+        await db.mark_user_blocked(user_id)
+        logger.info(f"User {user_id} blocked the bot (my_chat_member: {new_status})")
+    elif new_status == "member":
+        await db.mark_user_unblocked(user_id)
+        logger.info(f"User {user_id} unblocked the bot (my_chat_member: {new_status})")

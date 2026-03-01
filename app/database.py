@@ -244,6 +244,19 @@ async def mark_user_blocked(telegram_id: int):
         logger.warning(f"Failed to mark user {telegram_id} as blocked: {e}")
 
 
+async def mark_user_unblocked(telegram_id: int):
+    """Mark user as unblocked (they unblocked the bot). Clears is_blocked and blocked_at."""
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE users SET is_blocked = FALSE, blocked_at = NULL
+                   WHERE telegram_id = $1 AND is_blocked = TRUE""",
+                telegram_id,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to mark user {telegram_id} as unblocked: {e}")
+
+
 async def count_referrals(telegram_id: int) -> int:
     """Count how many users were referred by this user."""
     async with pool.acquire() as conn:

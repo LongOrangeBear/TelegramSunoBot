@@ -175,7 +175,12 @@ async def generation_watchdog():
                                 parse_mode="HTML",
                             )
                         except Exception as e:
-                            logger.error(f"Watchdog: failed to send msg for gen {gen_id}: {e}")
+                            err = str(e).lower()
+                            if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+                                await db.mark_user_blocked(chat_id)
+                                logger.info(f"Watchdog: user {chat_id} blocked the bot")
+                            else:
+                                logger.error(f"Watchdog: failed to send msg for gen {gen_id}: {e}")
 
         except Exception as e:
             logger.error(f"Watchdog error: {e}", exc_info=True)
@@ -229,7 +234,12 @@ async def handle_tbank_notification(request: web.Request) -> web.Response:
                             reply_markup=main_reply_kb(),
                         )
                     except Exception as e:
-                        logger.error(f"T-Bank: failed to notify user {user_id}: {e}")
+                        err = str(e).lower()
+                        if any(kw in err for kw in ("blocked", "deactivated", "not found")):
+                            await db.mark_user_blocked(user_id)
+                            logger.info(f"T-Bank: user {user_id} blocked the bot")
+                        else:
+                            logger.error(f"T-Bank: failed to notify user {user_id}: {e}")
 
                 logger.info(f"T-Bank payment completed: user={user_id}, "
                              f"credits={credits}, amount={amount_rub}₽, order={order_id}")
